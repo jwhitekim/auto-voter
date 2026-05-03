@@ -3,6 +3,8 @@ import sys
 import time
 import random
 import logging
+from pathlib import Path
+
 import requests
 import yaml
 from dotenv import load_dotenv
@@ -43,13 +45,23 @@ def _deep_merge(base, override):
     return result
 
 
-def load_config(path="config/config.yaml"):
+_ROOT = Path(__file__).parent.parent
+
+
+def load_config(path=None):
+    if path is None:
+        path = _ROOT / "config" / "config.yaml"
     try:
         with open(path, "r", encoding="utf-8") as f:
             user_cfg = yaml.safe_load(f) or {}
     except FileNotFoundError:
         user_cfg = {}
-    return _deep_merge(DEFAULTS, user_cfg)
+    cfg = _deep_merge(DEFAULTS, user_cfg)
+    # last_article_file 경로를 절대 경로로 보장
+    cfg["state"]["last_article_file"] = str(
+        _ROOT / cfg["state"]["last_article_file"]
+    )
+    return cfg
 
 
 class EverytimeBot:

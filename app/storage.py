@@ -6,8 +6,9 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv, set_key
 
-_ENV_FILE = ".env"
-_STORAGE_FILE = "data/encrypted_storage.json"
+_ROOT = Path(__file__).parent.parent
+_ENV_FILE = str(_ROOT / ".env")
+_STORAGE_FILE = _ROOT / "data" / "encrypted_storage.json"
 
 
 class SecureStorage:
@@ -20,7 +21,7 @@ class SecureStorage:
             os.environ["ENCRYPTION_KEY"] = key
             logging.info("새 암호화 키를 생성했습니다.")
         self._fernet = Fernet(key.encode())
-        self._path = Path(_STORAGE_FILE)
+        self._path = _STORAGE_FILE
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
     def _load_raw(self) -> dict:
