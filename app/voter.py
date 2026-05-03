@@ -1,19 +1,13 @@
-import os
-import sys
 import time
 import random
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
 import yaml
 from dotenv import load_dotenv
 from xml.etree import ElementTree
-
-"""
-첫 번째 실행: 세션키 얻음 -> 요청 날림 -> 처음에 200개 세팅 후 클릭 -> 게시글 아이디 저장
-두 번째 실행: 세션키 얻음 -> 게시글 찾기 -> 요청 날림 ->
-"""
 
 DEFAULTS = {
     "bot": {
@@ -24,9 +18,6 @@ DEFAULTS = {
         "sleep_min": 1.0,
         "sleep_max": 3.0,
         "page_delay": 0.5,
-    },
-    "state": {
-        "last_article_file": "data/last_article.txt",
     },
     "logging": {
         "level": "INFO",
@@ -56,12 +47,7 @@ def load_config(path=None):
             user_cfg = yaml.safe_load(f) or {}
     except FileNotFoundError:
         user_cfg = {}
-    cfg = _deep_merge(DEFAULTS, user_cfg)
-    # last_article_file 경로를 절대 경로로 보장
-    cfg["state"]["last_article_file"] = str(
-        _ROOT / cfg["state"]["last_article_file"]
-    )
-    return cfg
+    return _deep_merge(DEFAULTS, user_cfg)
 
 
 class EverytimeBot:
@@ -71,6 +57,8 @@ class EverytimeBot:
         from .storage import SecureStorage
         self.cfg = cfg
         self.storage = SecureStorage()
+        self.supabase = self.storage.supabase
+
         session_value = self.storage.load("etsid")
         if not session_value:
             raise ValueError("etsid가 저장되어 있지 않습니다. /login 을 먼저 실행하세요.")
@@ -97,25 +85,19 @@ class EverytimeBot:
             response.raise_for_status()
             return response.text
         except Exception as e:
-            print(f"[ERROR] {e}")
             logging.error(f"[ERROR] {e}")
             return ""
 
     def check_session(self, board_id):
-        print(f"[DEBUG] board_id: {board_id}")
-        print(f"[DEBUG] cookie: {self.session.headers.get('Cookie')}")
-    
         res_text = self._post("/find/board/article/list", data={
             'id': board_id,
             'limit_num': 1,
             'start_num': 0
         })
         if "<response>" in res_text:
-            print("세션 유효: 로그인 성공 상태입니다.")
             logging.info("세션 유효: 로그인 성공 상태입니다.")
             return True
         else:
-            print(f"세션 무효: {res_text}")
             logging.error(f"세션 무효: {res_text}")
             return False
 
@@ -123,25 +105,18 @@ class EverytimeBot:
         self.session.headers['Referer'] = f'https://everytime.kr/{board_id}'
         res_text = self._post(
             "/find/board/article/list",
-            data={
-                'id': board_id,
-                'limit_num': limit_num,
-                'start_num': start_num
-            }
+            data={'id': board_id, 'limit_num': limit_num, 'start_num': start_num}
         )
         if res_text == "0" or "<response>0</response>" in res_text:
-            print("결과: 세션이 만료되었거나 학교 인증 권한이 부족합니다.")
-            logging.error("결과: 세션이 만료되었거나 학교 인증 권한이 부족합니다.")
+            logging.error("세션 만료 또는 권한 부족")
             return []
         try:
             root = ElementTree.fromstring(res_text)
-            articles = [
-                {"id": article.get('id'), "title": article.get('title', '')}
-                for article in root.findall('.//article')
+            return [
+                {"id": a.get('id'), "title": a.get('title', '')}
+                for a in root.findall('.//article')
             ]
-            return articles
         except Exception as e:
-            print(f"파싱 에러: {e}")
             logging.error(f"파싱 에러: {e}")
             return []
 
@@ -157,7 +132,6 @@ class EverytimeBot:
                     count += 1
             offset += 20
             time.sleep(self.cfg["timing"]["page_delay"])
-        print(f"게시글({before_article_id})을 찾을 수 없습니다.")
         return count, -1
 
     def push_vote(self, article_id):
@@ -165,19 +139,15 @@ class EverytimeBot:
         try:
             res_text = self._post("/save/board/article/vote", data=data)
             if "1" in res_text:
-                print(f"[{article_id}] 공감 완료!")
                 logging.info(f"[{article_id}] 공감 완료!")
                 return True
             elif "-1" in res_text:
-                print(f"[{article_id}] 이미 공감한 글입니다.")
                 logging.info(f"[{article_id}] 이미 공감한 글입니다.")
                 return True
             else:
-                print(f"[{article_id}] 실패 응답: {res_text}")
                 logging.warning(f"[{article_id}] 실패 응답: {res_text}")
                 return False
         except Exception as e:
-            print(f"에러 발생: {e}")
             logging.error(f"에러 발생: {e}")
             return False
 
@@ -186,29 +156,53 @@ class Main(EverytimeBot):
     def __init__(self, cfg):
         super().__init__(cfg)
         self.target_board = cfg["bot"]["board_id"]
-        self.last_article_file = cfg["state"]["last_article_file"]
-        self.last_title_file = self.last_article_file.replace(".txt", "_title.txt")
         self.id_title_map: dict[str, str] = {}
 
-    def save_last_id(self, article_id, title: str = ""):
-        with open(self.last_article_file, 'w', encoding='utf-8') as f:
-            f.write(str(article_id))
-        with open(self.last_title_file, 'w', encoding='utf-8') as f:
-            f.write(title)
+    def _now(self) -> str:
+        return datetime.now(timezone.utc).isoformat()
 
-    def read_last_id(self):
+    def save_last_id(self, article_id: str, title: str = "") -> None:
         try:
-            with open(self.last_article_file, 'r', encoding='utf-8') as f:
-                return f.readline().strip()
-        except FileNotFoundError:
-            return None
+            self.supabase.table("bot_state").upsert({
+                "key": "last_article_id",
+                "value": str(article_id),
+                "updated_at": self._now(),
+            }).execute()
+            self.supabase.table("bot_state").upsert({
+                "key": "last_article_title",
+                "value": title,
+                "updated_at": self._now(),
+            }).execute()
+        except Exception as e:
+            logging.error(f"save_last_id 실패: {e}")
+
+    def read_last_id(self) -> str | None:
+        try:
+            res = (
+                self.supabase.table("bot_state")
+                .select("value")
+                .eq("key", "last_article_id")
+                .execute()
+            )
+            if res.data:
+                return res.data[0]["value"]
+        except Exception as e:
+            logging.error(f"read_last_id 실패: {e}")
+        return None
 
     def read_last_title(self) -> str:
         try:
-            with open(self.last_title_file, 'r', encoding='utf-8') as f:
-                return f.readline().strip()
-        except FileNotFoundError:
-            return ""
+            res = (
+                self.supabase.table("bot_state")
+                .select("value")
+                .eq("key", "last_article_title")
+                .execute()
+            )
+            if res.data:
+                return res.data[0]["value"]
+        except Exception as e:
+            logging.error(f"read_last_title 실패: {e}")
+        return ""
 
     def start(self) -> dict:
         max_pages = self.cfg["bot"]["max_pages"]
@@ -228,7 +222,6 @@ class Main(EverytimeBot):
             logging.info(f"현재 {i+1}페이지(시작 인덱스: {start_index}) 분석 중...")
 
             articles = self.get_article_ids(self.target_board, start_num=start_index)
-
             if not articles:
                 break
 
@@ -243,7 +236,12 @@ class Main(EverytimeBot):
                     logging.info("이전 작업 지점에 도달했습니다. 종료합니다.")
                     if new_latest_id:
                         self.save_last_id(new_latest_id, new_latest_title or "")
-                    return {"processed": processed, "last_id": new_latest_id, "last_title": new_latest_title, "success": True}
+                    return {
+                        "processed": processed,
+                        "last_id": new_latest_id,
+                        "last_title": new_latest_title,
+                        "success": True,
+                    }
 
                 self.push_vote(article_id=item['id'])
                 processed += 1
@@ -255,6 +253,9 @@ class Main(EverytimeBot):
         if new_latest_id:
             self.save_last_id(new_latest_id, new_latest_title or "")
 
-        return {"processed": processed, "last_id": new_latest_id, "last_title": new_latest_title, "success": True}
-
-
+        return {
+            "processed": processed,
+            "last_id": new_latest_id,
+            "last_title": new_latest_title,
+            "success": True,
+        }

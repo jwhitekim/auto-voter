@@ -1,59 +1,82 @@
 import os
-import json
+import sys
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv, set_key
+from supabase import create_client
 
 _ROOT = Path(__file__).parent.parent
 _ENV_FILE = str(_ROOT / ".env")
-_STORAGE_FILE = _ROOT / "data" / "encrypted_storage.json"
 
 
 class SecureStorage:
     def __init__(self):
         load_dotenv()
-        key = os.environ.get("ENCRYPTION_KEY", "").strip()
-        if not key:
-            key = Fernet.generate_key().decode()
-            set_key(_ENV_FILE, "ENCRYPTION_KEY", key)
-            os.environ["ENCRYPTION_KEY"] = key
-            logging.info("새 암호화 키를 생성했습니다.")
-        self._fernet = Fernet(key.encode())
-        self._path = _STORAGE_FILE
-        self._path.parent.mkdir(parents=True, exist_ok=True)
 
-    def _load_raw(self) -> dict:
-        if not self._path.exists():
-            return {}
+        url = os.environ.get("SUPABASE_URL", "").strip()
+        key_sb = os.environ.get("SUPABASE_KEY", "").strip()
+        if not url or not key_sb:
+            print("[ERROR] SUPABASE_URL 또는 SUPABASE_KEY 환경변수가 설정되지 않았습니다.")
+            sys.exit(1)
+
+        self.supabase = create_client(url, key_sb)
+
+        enc_key = os.environ.get("ENCRYPTION_KEY", "").strip()
+        if not enc_key:
+            enc_key = Fernet.generate_key().decode()
+            set_key(_ENV_FILE, "ENCRYPTION_KEY", enc_key)
+            os.environ["ENCRYPTION_KEY"] = enc_key
+            logging.warning(
+                "새 암호화 키를 생성했습니다. "
+                "Railway 배포 시 ENCRYPTION_KEY를 영구 환경변수로 설정하세요."
+            )
+        self._fernet = Fernet(enc_key.encode())
+
+    def _encrypt(self, value: str) -> str:
+        return self._fernet.encrypt(value.encode()).decode()
+
+    def _decrypt(self, encrypted: str) -> str | None:
         try:
-            return json.loads(self._path.read_text(encoding="utf-8"))
+            return self._fernet.decrypt(encrypted.encode()).decode()
         except Exception:
-            return {}
+            logging.error("복호화 실패")
+            return None
 
-    def _save_raw(self, data: dict):
-        self._path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    def _now(self) -> str:
+        return datetime.now(timezone.utc).isoformat()
 
-    def save(self, key: str, value: str):
-        data = self._load_raw()
-        data[key] = self._fernet.encrypt(value.encode()).decode()
-        self._save_raw(data)
+    def save(self, key: str, value: str) -> None:
+        try:
+            self.supabase.table("bot_storage").upsert({
+                "key": key,
+                "value": self._encrypt(value),
+                "updated_at": self._now(),
+            }).execute()
+        except Exception as e:
+            logging.error(f"storage.save 실패 ({key}): {e}")
 
     def load(self, key: str) -> str | None:
-        data = self._load_raw()
-        if key not in data:
-            return None
         try:
-            return self._fernet.decrypt(data[key].encode()).decode()
-        except Exception:
-            logging.error(f"복호화 실패: {key}")
-            return None
+            res = (
+                self.supabase.table("bot_storage")
+                .select("value")
+                .eq("key", key)
+                .execute()
+            )
+            if res.data:
+                return self._decrypt(res.data[0]["value"])
+        except Exception as e:
+            logging.error(f"storage.load 실패 ({key}): {e}")
+        return None
 
-    def delete(self, key: str):
-        data = self._load_raw()
-        data.pop(key, None)
-        self._save_raw(data)
+    def delete(self, key: str) -> None:
+        try:
+            self.supabase.table("bot_storage").delete().eq("key", key).execute()
+        except Exception as e:
+            logging.error(f"storage.delete 실패 ({key}): {e}")
 
     def exists(self, key: str) -> bool:
-        return key in self._load_raw()
+        return self.load(key) is not None

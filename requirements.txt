@@ -5,3 +5,4 @@ playwright-stealth
 cryptography
 pyyaml
 python-dotenv
+supabase>=2.0.0
