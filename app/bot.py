@@ -14,9 +14,9 @@ from telegram.ext import (
     filters,
 )
 
-from auth import get_etsid
-from everytime import Main, load_config
-from storage import SecureStorage
+from .auth import get_etsid
+from .everytime import Main, load_config
+from .storage import SecureStorage
 
 load_dotenv()
 

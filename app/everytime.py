@@ -3,8 +3,6 @@ import sys
 import time
 import random
 import logging
-import argparse
-
 import requests
 import yaml
 from dotenv import load_dotenv
@@ -26,7 +24,7 @@ DEFAULTS = {
         "page_delay": 0.5,
     },
     "state": {
-        "last_article_file": "last_article.txt",
+        "last_article_file": "data/last_article.txt",
     },
     "logging": {
         "level": "INFO",
@@ -45,7 +43,7 @@ def _deep_merge(base, override):
     return result
 
 
-def load_config(path="config.yaml"):
+def load_config(path="config/config.yaml"):
     try:
         with open(path, "r", encoding="utf-8") as f:
             user_cfg = yaml.safe_load(f) or {}
@@ -58,7 +56,7 @@ class EverytimeBot:
     BASE_URL = "https://api.everytime.kr"
 
     def __init__(self, cfg):
-        from storage import SecureStorage
+        from .storage import SecureStorage
         self.cfg = cfg
         self.storage = SecureStorage()
         session_value = self.storage.load("etsid")
@@ -248,25 +246,3 @@ class Main(EverytimeBot):
         return {"processed": processed, "last_id": new_latest_id, "last_title": new_latest_title, "success": True}
 
 
-if __name__ == "__main__":
-    load_dotenv()
-
-    parser = argparse.ArgumentParser(description='Everytime Auto Vote Bot')
-    parser.add_argument('--board', type=str, default=None, help='Target Board ID (overrides config)')
-    parser.add_argument('--pages', type=int, default=None, help='Max pages to scan (overrides config)')
-    args = parser.parse_args()
-
-    cfg = load_config()
-    if args.board is not None:
-        cfg["bot"]["board_id"] = args.board
-    if args.pages is not None:
-        cfg["bot"]["max_pages"] = args.pages
-
-    logging.basicConfig(
-        level=getattr(logging, cfg["logging"]["level"].upper(), logging.INFO),
-        format=cfg["logging"]["format"],
-    )
-
-    bot = Main(cfg)
-    result = bot.start()
-    print(result)
