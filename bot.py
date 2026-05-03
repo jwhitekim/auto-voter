@@ -246,14 +246,18 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     last_id = None
+    last_title = None
     try:
         cfg = load_config()
-        with open(cfg["state"]["last_article_file"], "r") as f:
-            last_id = f.readline().strip() or None
-    except FileNotFoundError:
+        _tmp = Main(cfg)
+        last_id = _tmp.read_last_id()
+        last_title = _tmp.read_last_title() or None
+    except Exception:
         pass
 
-    last_title = (_last_bot.id_title_map.get(last_id, last_id) if _last_bot and last_id else last_id)
+    # 파일에 title이 없으면 메모리 맵 → ID 순으로 fallback
+    if not last_title and last_id:
+        last_title = (_last_bot.id_title_map.get(last_id) if _last_bot else None) or last_id
 
     await update.message.reply_text(
         f"🔐 로그인: {'✅ 저장됨' if etsid_saved else '❌ 없음'}\n"

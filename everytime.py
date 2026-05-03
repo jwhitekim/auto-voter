@@ -177,11 +177,14 @@ class Main(EverytimeBot):
         super().__init__(cfg)
         self.target_board = cfg["bot"]["board_id"]
         self.last_article_file = cfg["state"]["last_article_file"]
+        self.last_title_file = self.last_article_file.replace(".txt", "_title.txt")
         self.id_title_map: dict[str, str] = {}
 
-    def save_last_id(self, article_id):
+    def save_last_id(self, article_id, title: str = ""):
         with open(self.last_article_file, 'w', encoding='utf-8') as f:
             f.write(str(article_id))
+        with open(self.last_title_file, 'w', encoding='utf-8') as f:
+            f.write(title)
 
     def read_last_id(self):
         try:
@@ -189,6 +192,13 @@ class Main(EverytimeBot):
                 return f.readline().strip()
         except FileNotFoundError:
             return None
+
+    def read_last_title(self) -> str:
+        try:
+            with open(self.last_title_file, 'r', encoding='utf-8') as f:
+                return f.readline().strip()
+        except FileNotFoundError:
+            return ""
 
     def start(self) -> dict:
         max_pages = self.cfg["bot"]["max_pages"]
@@ -222,7 +232,7 @@ class Main(EverytimeBot):
                 if str(item['id']) == str(last_id):
                     logging.info("이전 작업 지점에 도달했습니다. 종료합니다.")
                     if new_latest_id:
-                        self.save_last_id(new_latest_id)
+                        self.save_last_id(new_latest_id, new_latest_title or "")
                     return {"processed": processed, "last_id": new_latest_id, "last_title": new_latest_title, "success": True}
 
                 self.push_vote(article_id=item['id'])
@@ -233,7 +243,7 @@ class Main(EverytimeBot):
                 ))
 
         if new_latest_id:
-            self.save_last_id(new_latest_id)
+            self.save_last_id(new_latest_id, new_latest_title or "")
 
         return {"processed": processed, "last_id": new_latest_id, "last_title": new_latest_title, "success": True}
 
