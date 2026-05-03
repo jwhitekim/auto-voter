@@ -193,36 +193,39 @@ class Main(EverytimeBot):
     def start(self) -> dict:
         max_pages = self.cfg["bot"]["max_pages"]
         processed = 0
+        new_latest_id = None
+        new_latest_title = None
 
         if not self.check_session(self.target_board):
             logging.error("세션이 유효하지 않아 종료합니다.")
-            return {"processed": 0, "last_id": None, "success": False}
+            return {"processed": 0, "last_id": None, "last_title": None, "success": False}
 
         last_id = self.read_last_id()
         logging.info(f"마지막 작업 게시글 ID: {last_id}")
-
-        new_latest_id = None
 
         for i in range(max_pages):
             start_index = i * 20
             logging.info(f"현재 {i+1}페이지(시작 인덱스: {start_index}) 분석 중...")
 
-            current_ids = self.get_article_ids(self.target_board, start_num=start_index)
+            articles = self.get_article_ids(self.target_board, start_num=start_index)
 
-            if not current_ids:
+            if not articles:
                 break
 
-            if i == 0 and current_ids:
-                new_latest_id = current_ids[0]
+            if i == 0:
+                new_latest_id = articles[0]['id']
+                new_latest_title = articles[0]['title']
 
-            for article_id in current_ids:
-                if str(article_id) == str(last_id):
+            for item in articles:
+                self.id_title_map[item['id']] = item['title']
+
+                if str(item['id']) == str(last_id):
                     logging.info("이전 작업 지점에 도달했습니다. 종료합니다.")
                     if new_latest_id:
                         self.save_last_id(new_latest_id)
-                    return {"processed": processed, "last_id": new_latest_id, "success": True}
+                    return {"processed": processed, "last_id": new_latest_id, "last_title": new_latest_title, "success": True}
 
-                self.push_vote(article_id=article_id)
+                self.push_vote(article_id=item['id'])
                 processed += 1
                 time.sleep(random.uniform(
                     self.cfg["timing"]["sleep_min"],
@@ -232,7 +235,7 @@ class Main(EverytimeBot):
         if new_latest_id:
             self.save_last_id(new_latest_id)
 
-        return {"processed": processed, "last_id": new_latest_id, "success": True}
+        return {"processed": processed, "last_id": new_latest_id, "last_title": new_latest_title, "success": True}
 
 
 if __name__ == "__main__":

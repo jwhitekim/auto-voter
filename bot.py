@@ -28,6 +28,16 @@ ASK_USER, ASK_PASS, ASK_SESSION = range(3)
 
 storage = SecureStorage()
 _last_run_time: str | None = None
+_last_bot: "Main | None" = None
+
+
+class ListHandler(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.records: list[str] = []
+
+    def emit(self, record):
+        self.records.append(self.format(record))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -184,16 +194,34 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
         msg = await update.effective_chat.send_message("⏳ 공감 진행 중...")
-        result = await loop.run_in_executor(None, bot.start)
+
+        log_handler = ListHandler()
+        log_handler.setFormatter(logging.Formatter("%(levelname)s - %(message)s"))
+        root_logger = logging.getLogger()
+        root_logger.addHandler(log_handler)
+        try:
+            result = await loop.run_in_executor(None, bot.start)
+        finally:
+            root_logger.removeHandler(log_handler)
+
+        global _last_run_time, _last_bot
         _last_run_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _last_bot = bot
 
         if result["success"]:
             await msg.edit_text(
                 f"✅ 완료: {result['processed']}개 게시글 공감\n"
-                f"마지막 처리 ID: {result['last_id']}"
+                f"📌 마지막 처리 글: {result['last_title'] or result['last_id']}"
             )
         else:
             await msg.edit_text("❌ 공감 도중 오류가 발생했습니다.")
+
+        log_lines = log_handler.records[-20:]
+        if log_lines:
+            await update.effective_chat.send_message(
+                "📋 실행 로그:\n```\n" + "\n".join(log_lines) + "\n```",
+                parse_mode="Markdown",
+            )
         return
 
 
@@ -225,11 +253,13 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except FileNotFoundError:
         pass
 
+    last_title = (_last_bot.id_title_map.get(last_id, last_id) if _last_bot and last_id else last_id)
+
     await update.message.reply_text(
         f"🔐 로그인: {'✅ 저장됨' if etsid_saved else '❌ 없음'}\n"
         f"📡 세션: {'✅ 유효' if session_valid else '❌ 만료/없음'}\n"
         f"🕐 마지막 실행: {_last_run_time or '없음'}\n"
-        f"📌 마지막 처리 ID: {last_id or '없음'}"
+        f"📌 마지막 처리 글: {last_title or '없음'}"
     )
 
 
