@@ -44,6 +44,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 def _authorized(update: Update) -> bool:
     return update.effective_chat.id == ALLOWED_CHAT_ID

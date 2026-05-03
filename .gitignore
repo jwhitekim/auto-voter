@@ -4,3 +4,4 @@ __pycache__/
 last_article.txt
 last_article_title.txt
 encrypted_storage.json
+*.png
