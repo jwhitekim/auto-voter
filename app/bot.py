@@ -15,7 +15,7 @@ from telegram.ext import (
 )
 
 from .auth import get_etsid
-from .everytime import Main, load_config
+from .voter import Main, load_config
 from .storage import SecureStorage
 
 load_dotenv()
