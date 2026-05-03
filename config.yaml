@@ -1,0 +1,15 @@
+bot:
+  board_id: "389115"
+  max_pages: 5
+
+timing:
+  sleep_min: 1.0
+  sleep_max: 3.0
+  page_delay: 0.5
+
+state:
+  last_article_file: "last_article.txt"
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(levelname)s - %(message)s"

@@ -1,0 +1,5 @@
+.env
+__pycache__/
+*.pyc
+last_article.txt
+encrypted_storage.json

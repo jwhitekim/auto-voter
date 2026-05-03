@@ -1,0 +1,7 @@
+requests
+python-telegram-bot>=20.0
+playwright
+playwright-stealth
+cryptography
+pyyaml
+python-dotenv

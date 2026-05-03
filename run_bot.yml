@@ -1,0 +1,41 @@
+name: Everytime Bot
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # 매시간 0분에 실행 (필요에 따라 수정 가능)
+  workflow_dispatch:      # 수동 실행 버튼 활성화
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    # 깃허브 봇이 저장소에 push 할 수 있도록 권한 부여
+    permissions:
+      contents: write
+    
+    steps:
+    - name: 저장소 체크아웃
+      uses: actions/checkout@v3
+      
+    - name: 파이썬 설정
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: 라이브러리 설치
+      run: |
+        pip install requests
+        
+    - name: 봇 실행
+      env:
+        SESSION_KEY: ${{ secrets.EVERYTIME_SESSION }}
+      run: |
+        python everytime.py --session "$SESSION_KEY" --board "377392" --pages 5
+        
+    - name: 진행 상황 저장 (Commit & Push)
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+        git add last_article.txt
+        # 변경사항이 있을 때만 커밋하고 푸시
+        # 변경사항이 있을 때만 커밋하고 푸시 (에러 방지 로직 포함)
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Update last_article.txt" && git push)
