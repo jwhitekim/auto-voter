@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -48,6 +48,29 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 def _authorized(update: Update) -> bool:
     return update.effective_chat.id == ALLOWED_CHAT_ID
+
+
+def _fmt_created_at(s: str) -> str:
+    """'2026-05-04 20:30:01' → '5/4 오후 8:30'"""
+    try:
+        dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+        ampm = "오전" if dt.hour < 12 else "오후"
+        h12 = dt.hour % 12 or 12
+        return f"{dt.month}/{dt.day} {ampm} {h12}:{dt.minute:02d}"
+    except Exception:
+        return s
+
+
+async def _safe_edit(msg, text: str) -> None:
+    for _ in range(2):
+        try:
+            await msg.edit_text(text)
+            return
+        except Exception as e:
+            if "429" in str(e) or "Too Many Requests" in str(e):
+                await asyncio.sleep(1)
+            else:
+                return
 
 
 # ── /start ────────────────────────────────────────────────────────────────
@@ -194,14 +217,31 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-        msg = await update.effective_chat.send_message("⏳ 공감 진행 중...")
+        checkpoint = bot.read_checkpoint()
+
+        init_lines = ["⏳ 공감 진행 중...", "━━━━░░░░░░░░░░░░ 0개", "📄 1페이지 탐색 중"]
+        if checkpoint.get("post_created_at"):
+            init_lines.append(f"🔖 {_fmt_created_at(checkpoint['post_created_at'])} 이후 게시글만 탐색")
+        msg = await update.effective_chat.send_message("\n".join(init_lines))
+
+        def _progress(n: int, page: int) -> None:
+            if n % 5 != 0:
+                return
+            lines = ["⏳ 공감 진행 중...", f"━━━━░░░░░░░░░░░░ {n}개", f"📄 {page}페이지 탐색 중"]
+            if checkpoint.get("post_created_at"):
+                lines.append(f"🔖 {_fmt_created_at(checkpoint['post_created_at'])} 이후 게시글만 탐색")
+            fut = asyncio.run_coroutine_threadsafe(_safe_edit(msg, "\n".join(lines)), loop)
+            try:
+                fut.result(timeout=10)
+            except Exception:
+                pass
 
         log_handler = ListHandler()
         log_handler.setFormatter(logging.Formatter("%(levelname)s - %(message)s"))
         root_logger = logging.getLogger()
         root_logger.addHandler(log_handler)
         try:
-            result = await loop.run_in_executor(None, bot.start)
+            result = await loop.run_in_executor(None, bot.start, _progress)
         finally:
             root_logger.removeHandler(log_handler)
 
@@ -210,12 +250,22 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _last_bot = bot
 
         if result["success"]:
-            await msg.edit_text(
-                f"✅ 완료: {result['processed']}개 게시글 공감\n"
-                f"📌 마지막 처리 글: {result['last_title'] or result['last_id']}"
-            )
+            processed = result["processed"]
+            page = result.get("final_page", 1)
+            last_created_at = result.get("last_created_at", "")
+            last_title = result.get("last_title", "")
+            kst = timezone(timedelta(hours=9))
+            now_str = datetime.now(kst).strftime("%H:%M")
+            fmt_ca = _fmt_created_at(last_created_at) if last_created_at else "?"
+            await _safe_edit(msg, (
+                f"✅ 공감 완료  |  🆕 신규 +{processed}개\n"
+                f"━━━━━━━━━━━━━━━━ {processed}개\n"
+                f"📄 {page}페이지  |  🕐 {now_str}\n"
+                f"📌 {fmt_ca} 게시글까지\n"
+                f"   └ {last_title}"
+            ))
         else:
-            await msg.edit_text("❌ 공감 도중 오류가 발생했습니다.")
+            await _safe_edit(msg, "❌ 공감 도중 오류가 발생했습니다.")
 
         log_lines = log_handler.records[-20:]
         if log_lines:
@@ -246,19 +296,14 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    last_id = None
     last_title = None
     try:
         cfg = load_config()
         _tmp = Main(cfg)
-        last_id = _tmp.read_last_id()
-        last_title = _tmp.read_last_title() or None
+        cp = _tmp.read_checkpoint()
+        last_title = cp.get("post_title") or cp.get("post_id") or None
     except Exception:
         pass
-
-    # 파일에 title이 없으면 메모리 맵 → ID 순으로 fallback
-    if not last_title and last_id:
-        last_title = (_last_bot.id_title_map.get(last_id) if _last_bot else None) or last_id
 
     await update.message.reply_text(
         f"🔐 로그인: {'✅ 저장됨' if etsid_saved else '❌ 없음'}\n"

@@ -1,7 +1,7 @@
 import time
 import random
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
@@ -113,7 +113,7 @@ class EverytimeBot:
         try:
             root = ElementTree.fromstring(res_text)
             return [
-                {"id": a.get('id'), "title": a.get('title', '')}
+                {"id": a.get('id'), "title": a.get('title', ''), "created_at": a.get('created_at', '')}
                 for a in root.findall('.//article')
             ]
         except Exception as e:
@@ -161,20 +161,24 @@ class Main(EverytimeBot):
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def save_last_id(self, article_id: str, title: str = "") -> None:
+    def _now_kst(self) -> str:
+        return datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M:%S")
+
+    def save_checkpoint(self, post_id: str, post_title: str = "", post_created_at: str = "", voted_at: str = "") -> None:
+        now = self._now()
+        entries = [
+            ("last_article_id",         str(post_id)),
+            ("last_article_title",      post_title),
+            ("last_article_created_at", post_created_at),
+            ("last_voted_at",           voted_at or self._now_kst()),
+        ]
         try:
-            self.supabase.table("bot_state").upsert({
-                "key": "last_article_id",
-                "value": str(article_id),
-                "updated_at": self._now(),
-            }).execute()
-            self.supabase.table("bot_state").upsert({
-                "key": "last_article_title",
-                "value": title,
-                "updated_at": self._now(),
-            }).execute()
+            for key, value in entries:
+                self.supabase.table("bot_state").upsert(
+                    {"key": key, "value": value, "updated_at": now}
+                ).execute()
         except Exception as e:
-            logging.error(f"save_last_id 실패: {e}")
+            logging.error(f"save_checkpoint 실패: {e}")
 
     def read_last_id(self) -> str | None:
         try:
@@ -204,21 +208,48 @@ class Main(EverytimeBot):
             logging.error(f"read_last_title 실패: {e}")
         return ""
 
-    def start(self) -> dict:
+    def read_checkpoint(self) -> dict:
+        keys = ["last_article_id", "last_article_title", "last_article_created_at", "last_voted_at"]
+        out = {"post_id": None, "post_title": "", "post_created_at": "", "voted_at": ""}
+        key_map = {
+            "last_article_id":         "post_id",
+            "last_article_title":      "post_title",
+            "last_article_created_at": "post_created_at",
+            "last_voted_at":           "voted_at",
+        }
+        try:
+            res = (
+                self.supabase.table("bot_state")
+                .select("key,value")
+                .in_("key", keys)
+                .execute()
+            )
+            for row in (res.data or []):
+                field = key_map.get(row["key"])
+                if field:
+                    out[field] = row["value"]
+        except Exception as e:
+            logging.error(f"read_checkpoint 실패: {e}")
+        return out
+
+    def start(self, progress_callback=None) -> dict:
         max_pages = self.cfg["bot"]["max_pages"]
         processed = 0
         new_latest_id = None
         new_latest_title = None
+        new_latest_created_at = None
+        final_page = 0
 
         if not self.check_session(self.target_board):
             logging.error("세션이 유효하지 않아 종료합니다.")
-            return {"processed": 0, "last_id": None, "last_title": None, "success": False}
+            return {"processed": 0, "last_id": None, "last_title": None, "last_created_at": None, "final_page": 0, "success": False}
 
         last_id = self.read_last_id()
         logging.info(f"마지막 작업 게시글 ID: {last_id}")
 
         for i in range(max_pages):
             start_index = i * 20
+            final_page = i + 1
             logging.info(f"현재 {i+1}페이지(시작 인덱스: {start_index}) 분석 중...")
 
             articles = self.get_article_ids(self.target_board, start_num=start_index)
@@ -228,6 +259,7 @@ class Main(EverytimeBot):
             if i == 0:
                 new_latest_id = articles[0]['id']
                 new_latest_title = articles[0]['title']
+                new_latest_created_at = articles[0].get('created_at', '')
 
             for item in articles:
                 self.id_title_map[item['id']] = item['title']
@@ -235,27 +267,33 @@ class Main(EverytimeBot):
                 if str(item['id']) == str(last_id):
                     logging.info("이전 작업 지점에 도달했습니다. 종료합니다.")
                     if new_latest_id:
-                        self.save_last_id(new_latest_id, new_latest_title or "")
+                        self.save_checkpoint(new_latest_id, new_latest_title or "", new_latest_created_at or "")
                     return {
                         "processed": processed,
                         "last_id": new_latest_id,
                         "last_title": new_latest_title,
+                        "last_created_at": new_latest_created_at,
+                        "final_page": final_page,
                         "success": True,
                     }
 
                 self.push_vote(article_id=item['id'])
                 processed += 1
+                if progress_callback:
+                    progress_callback(processed, final_page)
                 time.sleep(random.uniform(
                     self.cfg["timing"]["sleep_min"],
                     self.cfg["timing"]["sleep_max"],
                 ))
 
         if new_latest_id:
-            self.save_last_id(new_latest_id, new_latest_title or "")
+            self.save_checkpoint(new_latest_id, new_latest_title or "", new_latest_created_at or "")
 
         return {
             "processed": processed,
             "last_id": new_latest_id,
             "last_title": new_latest_title,
+            "last_created_at": new_latest_created_at,
+            "final_page": final_page,
             "success": True,
         }
