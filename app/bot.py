@@ -31,14 +31,6 @@ _last_run_time: str | None = None
 _last_bot: "Main | None" = None
 
 
-class ListHandler(logging.Handler):
-    def __init__(self):
-        super().__init__()
-        self.records: list[str] = []
-
-    def emit(self, record):
-        self.records.append(self.format(record))
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -236,17 +228,11 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
-        log_handler = ListHandler()
-        log_handler.setFormatter(logging.Formatter("%(levelname)s - %(message)s"))
-        root_logger = logging.getLogger()
-        root_logger.addHandler(log_handler)
-        try:
-            result = await loop.run_in_executor(None, bot.start, _progress)
-        finally:
-            root_logger.removeHandler(log_handler)
+        result = await loop.run_in_executor(None, bot.start, _progress)
 
         global _last_run_time, _last_bot
-        _last_run_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        KST = timezone(timedelta(hours=9))
+        _last_run_time = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
         _last_bot = bot
 
         if result["success"]:
@@ -254,25 +240,26 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
             page = result.get("final_page", 1)
             last_created_at = result.get("last_created_at", "")
             last_title = result.get("last_title", "")
-            kst = timezone(timedelta(hours=9))
-            now_str = datetime.now(kst).strftime("%H:%M")
+            now_str = datetime.now(KST).strftime("%H:%M")
             fmt_ca = _fmt_created_at(last_created_at) if last_created_at else "?"
-            await _safe_edit(msg, (
-                f"✅ 공감 완료  |  🆕 신규 +{processed}개\n"
-                f"━━━━━━━━━━━━━━━━ {processed}개\n"
-                f"📄 {page}페이지  |  🕐 {now_str}\n"
-                f"📌 {fmt_ca} 게시글까지\n"
-                f"   └ {last_title}"
-            ))
+            if processed == 0:
+                await _safe_edit(msg, (
+                    f"✅ 이미 최신 상태입니다\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"📌 {fmt_ca} 이후 새 게시글 없음\n"
+                    f"   └ {last_title}\n"
+                    f"🕐 {now_str}"
+                ))
+            else:
+                await _safe_edit(msg, (
+                    f"✅ 공감 완료  |  🆕 신규 +{processed}개\n"
+                    f"━━━━━━━━━━━━━━━━ {processed}개\n"
+                    f"📄 {page}페이지  |  🕐 {now_str}\n"
+                    f"📌 {fmt_ca} 게시글까지\n"
+                    f"   └ {last_title}"
+                ))
         else:
             await _safe_edit(msg, "❌ 공감 도중 오류가 발생했습니다.")
-
-        log_lines = log_handler.records[-20:]
-        if log_lines:
-            await update.effective_chat.send_message(
-                "📋 실행 로그:\n```\n" + "\n".join(log_lines) + "\n```",
-                parse_mode="Markdown",
-            )
         return
 
 
