@@ -244,8 +244,18 @@ class Main(EverytimeBot):
             logging.error("세션이 유효하지 않아 종료합니다.")
             return {"processed": 0, "last_id": None, "last_title": None, "last_created_at": None, "final_page": 0, "success": False}
 
-        last_id = self.read_last_id()
-        logging.info(f"마지막 작업 게시글 ID: {last_id}")
+        checkpoint = self.read_checkpoint()
+        last_id = checkpoint["post_id"]
+        last_created_at = checkpoint["post_created_at"]
+        logging.info(f"마지막 작업 게시글 ID: {last_id}, created_at: {last_created_at}")
+
+        def _ts(s):
+            try:
+                return int(s)
+            except (ValueError, TypeError):
+                return 0
+
+        last_ts = _ts(last_created_at)
 
         for i in range(max_pages):
             start_index = i * 20
@@ -266,6 +276,23 @@ class Main(EverytimeBot):
 
                 if str(item['id']) == str(last_id):
                     logging.info("이전 작업 지점에 도달했습니다. 종료합니다.")
+                    if new_latest_id:
+                        self.save_checkpoint(new_latest_id, new_latest_title or "", new_latest_created_at or "")
+                    return {
+                        "processed": processed,
+                        "last_id": new_latest_id,
+                        "last_title": new_latest_title,
+                        "last_created_at": new_latest_created_at,
+                        "final_page": final_page,
+                        "success": True,
+                    }
+
+                # 체크포인트 게시글이 삭제된 경우: 저장된 타임스탬프보다 오래된 글에 도달하면 중단
+                if last_ts and _ts(item.get('created_at', '')) <= last_ts:
+                    logging.warning(
+                        f"체크포인트({last_id})를 찾지 못했으나 타임스탬프 기준 도달. "
+                        f"삭제된 게시글로 판단하고 중단합니다. (처리: {processed}개)"
+                    )
                     if new_latest_id:
                         self.save_checkpoint(new_latest_id, new_latest_title or "", new_latest_created_at or "")
                     return {
