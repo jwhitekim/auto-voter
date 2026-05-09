@@ -30,8 +30,10 @@ def format_stats_message(history: list[dict]) -> str:
     total_voted = _sum(valid)
     total_skipped = sum(h["skipped"] for h in valid)
 
-    best = max(valid, key=lambda h: h["voted"])
-    worst = min(valid, key=lambda h: h["voted"])
+    known = [h for h in valid if h.get("is_full_scan") is not None]
+    best_pool = known if known else valid
+    best = max(best_pool, key=lambda h: h["voted"])
+    worst = min(best_pool, key=lambda h: h["voted"])
 
     def _short_date(h):
         dt = parse_ran_at_kst(h["ran_at"])

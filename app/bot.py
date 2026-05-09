@@ -19,7 +19,6 @@ from .auth import get_etsid
 from .voter import Main, load_config
 from .repository import storage, get_skip_keywords, save_skip_keywords, append_run_stat, load_run_history, save_run_history, delete_run_stat
 from .stats import format_stats_message
-from .scheduler import _scheduler, _vote_lock, update_scheduler
 
 load_dotenv()
 
@@ -27,6 +26,8 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 ALLOWED_CHAT_ID = int(os.environ["TELEGRAM_CHAT_ID"])
 
 ASK_USER, ASK_PASS, ASK_SESSION = range(3)
+
+_vote_lock = asyncio.Lock()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -73,9 +74,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/setsession — etsid 수동 입력\n"
         "/setboard — 공감할 게시판 선택\n"
         "/vote — 공감 봇 실행\n"
-        "/setschedule HH:MM — 자동 실행 예약\n"
-        "/listschedule — 예약 현황 확인\n"
-        "/cancelschedule — 자동 실행 취소\n"
         "/addskip 키워드 — 건너뛸 키워드 추가\n"
         "/removeskip 키워드 — 키워드 삭제\n"
         "/listskip — 등록된 키워드 목록\n"
@@ -357,13 +355,11 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         or storage.load("board_id")
         or cfg["bot"]["board_id"]
     )
-    schedule_time = storage.load("schedule_time")
 
     await update.message.reply_text(
         f"🔐 로그인: {'✅ 저장됨' if etsid_saved else '❌ 없음'}\n"
         f"📡 세션: {'✅ 유효' if session_valid else '❌ 만료/없음'}\n"
         f"📋 게시판: {current_board}\n"
-        f"⏰ 자동 실행: {schedule_time + ' (KST)' if schedule_time else '없음'}\n"
         f"🕐 마지막 실행: {storage.load('last_run_time') or '없음'}\n"
         f"📌 마지막 처리 글: {last_title or '없음'}"
     )
@@ -424,7 +420,7 @@ async def cmd_listskip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🚫 건너뛸 키워드 ({len(keywords)}개):\n{lines}")
 
 
-# ── /stats /togglestat ────────────────────────────────────────────────────
+# ── /stats /togglestat /deletestat ───────────────────────────────────────
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _authorized(update):
@@ -493,83 +489,13 @@ async def cmd_deletestat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ 삭제 실패.")
 
 
-# ── /setschedule /listschedule /cancelschedule ────────────────────────────
-
-async def cmd_setschedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not _authorized(update):
-        return
-    if not context.args:
-        await update.message.reply_text("사용법: /setschedule HH:MM  (예: /setschedule 08:00)")
-        return
-    try:
-        hour, minute = map(int, context.args[0].split(":"))
-        if not (0 <= hour <= 23 and 0 <= minute <= 59):
-            raise ValueError
-    except Exception:
-        await update.message.reply_text("❌ 형식이 잘못되었습니다. 예: /setschedule 08:00")
-        return
-    storage.save("schedule_time", f"{hour:02d}:{minute:02d}")
-    update_scheduler(context.application, hour, minute)
-    await update.message.reply_text(f"✅ 매일 {hour:02d}:{minute:02d} (KST)에 자동 실행됩니다.")
-
-
-async def cmd_listschedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not _authorized(update):
-        return
-    schedule_time = storage.load("schedule_time")
-    if not schedule_time:
-        await update.message.reply_text(
-            "⏰ 예약된 자동 실행이 없습니다.\n/setschedule HH:MM 으로 예약하세요."
-        )
-        return
-    job = _scheduler.get_job("auto_vote")
-    if job and job.next_run_time:
-        next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M KST")
-    else:
-        next_run = "알 수 없음"
-    board_label = storage.load("board_name") or storage.load("board_id") or "미설정"
-    await update.message.reply_text(
-        f"⏰ 자동 실행 스케줄\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"🕐 실행 시간: 매일 {schedule_time} (KST)\n"
-        f"▶ 다음 실행: {next_run}\n"
-        f"📋 대상 게시판: {board_label}"
-    )
-
-
-async def cmd_cancelschedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not _authorized(update):
-        return
-    storage.delete("schedule_time")
-    _scheduler.remove_all_jobs()
-    await update.message.reply_text("✅ 자동 실행이 취소되었습니다.")
-
-
 # ── Entry point ───────────────────────────────────────────────────────────
-
-async def _post_init(app: Application) -> None:
-    schedule_time = storage.load("schedule_time")
-    if schedule_time:
-        try:
-            hour, minute = map(int, schedule_time.split(":"))
-            update_scheduler(app, hour, minute)
-            logging.info(f"스케줄 복원: 매일 {hour:02d}:{minute:02d} KST")
-        except Exception as e:
-            logging.error(f"스케줄 복원 실패: {e}")
-
-
-async def _post_shutdown(app: Application) -> None:
-    if _scheduler.running:
-        _scheduler.shutdown()
-
 
 def main():
     app = (
         Application.builder()
         .token(TELEGRAM_TOKEN)
         .concurrent_updates(True)
-        .post_init(_post_init)
-        .post_shutdown(_post_shutdown)
         .build()
     )
 
@@ -596,9 +522,6 @@ def main():
     app.add_handler(CommandHandler("setboard", cmd_setboard))
     app.add_handler(CallbackQueryHandler(setboard_callback, pattern="^(sb:|bp:)"))
     app.add_handler(CommandHandler("vote", cmd_vote))
-    app.add_handler(CommandHandler("setschedule", cmd_setschedule))
-    app.add_handler(CommandHandler("listschedule", cmd_listschedule))
-    app.add_handler(CommandHandler("cancelschedule", cmd_cancelschedule))
     app.add_handler(CommandHandler("addskip", cmd_addskip))
     app.add_handler(CommandHandler("removeskip", cmd_removeskip))
     app.add_handler(CommandHandler("listskip", cmd_listskip))
