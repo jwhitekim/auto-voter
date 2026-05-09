@@ -123,6 +123,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/removeskip 키워드 — 키워드 삭제\n"
         "/listskip — 등록된 키워드 목록\n"
         "/stats — 공감 통계\n"
+        "/togglestat <번호> — 레코드 유효/제외 토글\n"
         "/status — 현재 상태 확인\n"
         "/logout — 저장된 정보 삭제"
     )
@@ -548,6 +549,21 @@ async def cmd_listskip(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── /stats ────────────────────────────────────────────────────────────────
 
+def _parse_ran_at_kst(ran_at: str):
+    """ran_at 문자열을 KST datetime으로 파싱. 실패 시 None."""
+    from datetime import datetime, timezone, timedelta
+    KST = timezone(timedelta(hours=9))
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"):
+        try:
+            dt = datetime.strptime(ran_at[:19], fmt[:len(ran_at[:19])])
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=KST)
+            return dt.astimezone(KST)
+        except ValueError:
+            continue
+    return None
+
+
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _authorized(update):
         return
@@ -556,28 +572,129 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("아직 실행 기록이 없습니다.")
         return
     history = json.loads(raw)
-    total_voted = sum(h["voted"] for h in history)
-    total_skipped = sum(h["skipped"] for h in history)
-    avg = total_voted / len(history) if history else 0
+    valid = [h for h in history if h.get("is_valid", True)]
 
-    recent = history[-7:]
-    max_voted = max((h["voted"] for h in recent), default=1) or 1
-    bars = ""
-    for h in recent:
-        dt = h["ran_at"][5:16]  # MM-DD HH:MM
-        n = h["voted"]
-        bar_len = round(n / max_voted * 15) if n > 0 else 0
-        bar = "█" * max(bar_len, 1 if n > 0 else 0)
+    if not valid:
+        await update.message.reply_text("유효한 실행 기록이 없습니다.")
+        return
+
+    from datetime import datetime, timezone, timedelta
+    KST = timezone(timedelta(hours=9))
+    now_kst = datetime.now(KST)
+    today = now_kst.date()
+    week_start = today - timedelta(days=today.weekday())
+
+    # ── 기간별 집계 ──
+    today_records = [h for h in valid if (dt := _parse_ran_at_kst(h["ran_at"])) and dt.date() == today]
+    week_records  = [h for h in valid if (dt := _parse_ran_at_kst(h["ran_at"])) and dt.date() >= week_start]
+
+    def _sum(recs): return sum(h["voted"] for h in recs)
+    def _avg(recs): return _sum(recs) / len(recs) if recs else 0
+
+    total_voted   = _sum(valid)
+    total_skipped = sum(h["skipped"] for h in valid)
+    all_avg       = _avg(valid)
+
+    # ── 최고/최저 ──
+    best  = max(valid, key=lambda h: h["voted"])
+    worst = min(valid, key=lambda h: h["voted"])
+
+    def _short_date(h):
+        dt = _parse_ran_at_kst(h["ran_at"])
+        return dt.strftime("%m/%d %H:%M") if dt else h["ran_at"][:16]
+
+    # ── 최근 5 vs 이전 5 추세 ──
+    if len(valid) >= 10:
+        trend_str = ""
+        r5 = _avg(valid[-5:])
+        p5 = _avg(valid[-10:-5])
+        diff = r5 - p5
+        arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "─")
+        trend_str = f"{arrow} {abs(diff):.1f}  (최근5 평균 {r5:.1f}  /  이전5 평균 {p5:.1f})"
+    else:
+        trend_str = "데이터 부족 (10회 이상 필요)"
+
+    # ── 시간대별 패턴 ──
+    slots = {"심야(00~06)": [], "오전(06~12)": [], "오후(12~18)": [], "저녁(18~24)": []}
+    for h in valid:
+        dt = _parse_ran_at_kst(h["ran_at"])
+        if dt is None:
+            continue
+        hr = dt.hour
+        if hr < 6:
+            slots["심야(00~06)"].append(h["voted"])
+        elif hr < 12:
+            slots["오전(06~12)"].append(h["voted"])
+        elif hr < 18:
+            slots["오후(12~18)"].append(h["voted"])
+        else:
+            slots["저녁(18~24)"].append(h["voted"])
+
+    slot_avgs = {k: (sum(v) / len(v) if v else None) for k, v in slots.items()}
+    best_slot = max((k for k, v in slot_avgs.items() if v is not None), key=lambda k: slot_avgs[k], default=None)
+    time_lines = ""
+    for k, v in slot_avgs.items():
+        if v is None:
+            time_lines += f"  {k}: -\n"
+        else:
+            star = " ★" if k == best_slot else ""
+            count = len(slots[k])
+            time_lines += f"  {k}: 평균 {v:.1f}개 ({count}회){star}\n"
+
+    # ── 최근 기록 목록 (번호 포함) ──
+    recent_lines = ""
+    show = history[-10:]
+    for i, h in enumerate(show):
+        idx = len(history) - len(show) + i + 1
+        mark = "✗ " if not h.get("is_valid", True) else ""
+        dt_str = _parse_ran_at_kst(h["ran_at"])
+        dt_str = dt_str.strftime("%m/%d %H:%M") if dt_str else h["ran_at"][:16]
         board = h.get("board_name") or h.get("board_id", "")
-        bars += f"{dt}  {bar or '·'}  {n}개  ({board})\n"
+        recent_lines += f"  {idx}. {mark}{dt_str}  {h['voted']}개  ({board})\n"
 
-    await update.message.reply_text(
-        f"📊 공감 통계 (최근 {len(history)}회)\n"
+    sample_warn = "\n⚠️ 표본 부족 (참고용)" if len(valid) < 50 else ""
+
+    msg = (
+        f"📊 공감 통계{sample_warn}\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"총 공감: {total_voted}개  |  평균: {avg:.1f}개/회\n"
-        f"건너뜀: {total_skipped}개\n\n"
-        f"최근 {len(recent)}회:\n{bars}"
+        f"오늘: {_sum(today_records)}개 ({len(today_records)}회) | "
+        f"이번주: {_sum(week_records)}개 ({len(week_records)}회)\n"
+        f"전체: {total_voted}개 ({len(valid)}회) | 평균: {all_avg:.1f}개/회\n"
+        f"건너뜀: {total_skipped}개\n"
+        f"\n📈 추세\n  {trend_str}\n"
+        f"\n🏆 최고: {best['voted']}개 ({_short_date(best)})  "
+        f"최저: {worst['voted']}개 ({_short_date(worst)})\n"
+        f"\n🕐 시간대별 패턴\n{time_lines}"
+        f"\n📋 최근 기록 (번호로 /togglestat 사용)\n{recent_lines}"
     )
+    await update.message.reply_text(msg)
+
+
+async def cmd_togglestat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    if not context.args:
+        await update.message.reply_text("사용법: /togglestat <번호>  (예: /togglestat 3)")
+        return
+    try:
+        idx = int(context.args[0]) - 1
+    except ValueError:
+        await update.message.reply_text("❌ 숫자를 입력해주세요.")
+        return
+
+    raw = storage.load("run_history")
+    if not raw:
+        await update.message.reply_text("실행 기록이 없습니다.")
+        return
+    history = json.loads(raw)
+    if not (0 <= idx < len(history)):
+        await update.message.reply_text(f"❌ 유효한 번호 범위: 1~{len(history)}")
+        return
+
+    history[idx]["is_valid"] = not history[idx].get("is_valid", True)
+    storage.save("run_history", json.dumps(history))
+    state = "유효" if history[idx]["is_valid"] else "제외"
+    await update.message.reply_text(f"✅ #{idx + 1} 레코드를 [{state}]로 변경했습니다.")
 
 
 # ── /setschedule /cancelschedule ──────────────────────────────────────────
@@ -665,6 +782,7 @@ def main():
     app.add_handler(CommandHandler("removeskip", cmd_removeskip))
     app.add_handler(CommandHandler("listskip", cmd_listskip))
     app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("togglestat", cmd_togglestat))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("logout", cmd_logout))
 
