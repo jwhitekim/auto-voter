@@ -50,7 +50,12 @@ def _save_skip_keywords(keywords: list[str]) -> None:
 def _append_run_stat(board_id: str, voted: int, skipped: int, ran_at: str) -> None:
     raw = storage.load("run_history")
     history = json.loads(raw) if raw else []
-    history.append({"board_id": board_id, "voted": voted, "skipped": skipped, "ran_at": ran_at})
+    board_name = storage.load("board_name") or board_id
+    history.append({
+        "board_id": board_id, "board_name": board_name,
+        "voted": voted, "skipped": skipped,
+        "ran_at": ran_at, "is_valid": True,
+    })
     storage.save("run_history", json.dumps(history[-30:]))
 
 
@@ -563,14 +568,15 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         n = h["voted"]
         bar_len = round(n / max_voted * 15) if n > 0 else 0
         bar = "█" * max(bar_len, 1 if n > 0 else 0)
-        bars += f"{dt}  {bar or '·'}  {n}개\n"
+        board = h.get("board_name") or h.get("board_id", "")
+        bars += f"{dt}  {bar or '·'}  {n}개  ({board})\n"
 
     await update.message.reply_text(
         f"📊 공감 통계 (최근 {len(history)}회)\n"
         f"━━━━━━━━━━━━━━━━\n"
         f"총 공감: {total_voted}개  |  평균: {avg:.1f}개/회\n"
         f"건너뜀: {total_skipped}개\n\n"
-        f"최근 7회:\n{bars}"
+        f"최근 {len(recent)}회:\n{bars}"
     )
 
 
