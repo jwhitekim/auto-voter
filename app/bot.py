@@ -1,7 +1,10 @@
+import asyncio
 import logging
 import os
+import sys
 
 from dotenv import load_dotenv
+from telegram.error import Conflict
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -39,6 +42,21 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
+
+_conflict_count = 0
+
+
+async def _error_handler(update, context) -> None:
+    global _conflict_count
+    if isinstance(context.error, Conflict):
+        _conflict_count += 1
+        if _conflict_count > 3:
+            logging.error("Conflict 에러 3회 연속 발생. 봇을 종료합니다.")
+            sys.exit(1)
+        logging.warning(f"다른 인스턴스가 실행 중입니다. 5초 후 재시도... ({_conflict_count}/3)")
+        await asyncio.sleep(5)
+    else:
+        logging.error(f"처리되지 않은 에러: {context.error}", exc_info=context.error)
 
 
 def main():
@@ -112,6 +130,7 @@ def main():
     app.add_handler(deletestat_conv)
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("logout", cmd_logout))
+    app.add_error_handler(_error_handler)
 
     app.run_polling()
 
