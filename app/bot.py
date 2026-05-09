@@ -70,18 +70,18 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "📋 사용 가능한 명령어:\n"
-        "/login — 아이디/비번으로 자동 로그인\n"
-        "/setsession — etsid 수동 입력\n"
-        "/setboard — 공감할 게시판 선택\n"
-        "/vote — 공감 봇 실행\n"
-        "/addskip 키워드 — 건너뛸 키워드 추가\n"
-        "/removeskip 키워드 — 키워드 삭제\n"
-        "/listskip — 등록된 키워드 목록\n"
-        "/stats — 공감 통계\n"
-        "/togglestat <번호> — 레코드 유효/제외 토글\n"
-        "/deletestat <번호> — 레코드 영구 삭제\n"
-        "/status — 현재 상태 확인\n"
-        "/logout — 저장된 정보 삭제"
+        "login - 아이디/비번으로 자동 로그인\n"
+        "setsession — etsid 수동 입력\n"
+        "setboard — 공감할 게시판 선택\n"
+        "vote — 공감 봇 실행\n"
+        "addskip 키워드 — 건너뛸 키워드 추가\n"
+        "removeskip 키워드 — 키워드 삭제\n"
+        "listskip — 등록된 키워드 목록\n"
+        "stats — 공감 통계\n"
+        "togglestat <번호> — 레코드 유효/제외 토글\n"
+        "deletestat <번호> — 레코드 영구 삭제\n"
+        "status — 현재 상태 확인\n"
+        "logout — 저장된 정보 삭제"
     )
 
 
