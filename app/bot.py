@@ -254,6 +254,7 @@ async def setboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         boards = context.user_data.get("boards", [])
         board_name = next((b["name"] for b in boards if b["id"] == board_id), board_id)
         storage.save("board_id", board_id)
+        storage.save("board_name", board_name)
         await query.edit_message_text(
             f"✅ 게시판 설정 완료!\n"
             f"📌 {board_name} ({board_id})\n\n"
@@ -411,7 +412,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     cfg = load_config()
     saved_board = storage.load("board_id")
-    current_board = saved_board if saved_board else cfg["bot"]["board_id"]
+    saved_name = storage.load("board_name")
+    current_board = saved_name or saved_board or cfg["bot"]["board_id"]
     schedule_time = storage.load("schedule_time")
 
     await update.message.reply_text(
@@ -478,13 +480,14 @@ async def _run_scheduled_vote(app: "Application") -> None:
                 skipped = result.get("skipped", 0)
                 if voted > 0 or skipped > 0:
                     _append_run_stat(bot.target_board, voted, skipped, now_kst)
+                board_label = storage.load("board_name") or bot.target_board
                 if voted == 0:
-                    msg = f"⏰ 자동 실행 — 새 게시글 없음 ({now_str})"
+                    msg = f"⏰ 자동 실행 — 새 게시글 없음 ({now_str})\n📋 {board_label}"
                 else:
                     msg = f"⏰ 자동 실행 완료 — +{voted}개 공감"
                     if skipped:
                         msg += f" / {skipped}개 건너뜀"
-                    msg += f" ({now_str})"
+                    msg += f" ({now_str})\n📋 {board_label}"
                 await app.bot.send_message(ALLOWED_CHAT_ID, msg)
             else:
                 await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 오류가 발생했습니다.")
@@ -550,19 +553,23 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     history = json.loads(raw)
     total_voted = sum(h["voted"] for h in history)
     total_skipped = sum(h["skipped"] for h in history)
+    avg = total_voted / len(history) if history else 0
 
     recent = history[-7:]
+    max_voted = max((h["voted"] for h in recent), default=1) or 1
     bars = ""
     for h in recent:
-        date = h["ran_at"][5:10]
+        dt = h["ran_at"][5:16]  # MM-DD HH:MM
         n = h["voted"]
-        bar = "█" * min(max(n // 5, 1 if n > 0 else 0), 15)
-        bars += f"{date}  {bar or '·'}  {n}개\n"
+        bar_len = round(n / max_voted * 15) if n > 0 else 0
+        bar = "█" * max(bar_len, 1 if n > 0 else 0)
+        bars += f"{dt}  {bar or '·'}  {n}개\n"
 
     await update.message.reply_text(
         f"📊 공감 통계 (최근 {len(history)}회)\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"총 공감: {total_voted}개  |  건너뜀: {total_skipped}개\n\n"
+        f"총 공감: {total_voted}개  |  평균: {avg:.1f}개/회\n"
+        f"건너뜀: {total_skipped}개\n\n"
         f"최근 7회:\n{bars}"
     )
 
