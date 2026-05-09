@@ -32,6 +32,7 @@ ASK_USER, ASK_PASS, ASK_SESSION = range(3)
 
 storage = SecureStorage()
 _scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
+_vote_lock = asyncio.Lock()
 
 
 def _get_skip_keywords() -> list[str]:
@@ -270,108 +271,113 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ /login 먼저 실행하세요.")
         return
 
-    cfg = load_config()
-    loop = asyncio.get_running_loop()
+    if _vote_lock.locked():
+        await update.message.reply_text("⚠️ 이미 공감이 실행 중입니다.")
+        return
 
-    for attempt in range(2):
-        try:
-            bot = Main(cfg)
-        except ValueError:
-            await update.message.reply_text("⚠️ /login 먼저 실행하세요.")
-            return
-        except Exception as e:
-            logging.error(f"Main 초기화 실패: {e}")
-            return
+    async with _vote_lock:
+        cfg = load_config()
+        loop = asyncio.get_running_loop()
 
-        try:
-            session_ok = await loop.run_in_executor(
-                None, bot.check_session, bot.target_board
-            )
-        except Exception as e:
-            logging.error(f"check_session 실패: {e}")
-            return
+        for attempt in range(2):
+            try:
+                bot = Main(cfg)
+            except ValueError:
+                await update.message.reply_text("⚠️ /login 먼저 실행하세요.")
+                return
+            except Exception as e:
+                logging.error(f"Main 초기화 실패: {e}")
+                return
 
-        if not session_ok:
-            if attempt == 0 and storage.exists("userid") and storage.exists("password"):
-                msg = await update.effective_chat.send_message(
-                    "🔄 세션 만료. 자동 재로그인 중..."
+            try:
+                session_ok = await loop.run_in_executor(
+                    None, bot.check_session, bot.target_board
                 )
-                new_etsid = await get_etsid(
-                    storage.load("userid"),
-                    storage.load("password"),
-                    storage,
-                )
-                if new_etsid:
-                    storage.save("etsid", new_etsid)
-                    await msg.edit_text("✅ 재로그인 성공. 공감 시작...")
-                    continue
+            except Exception as e:
+                logging.error(f"check_session 실패: {e}")
+                return
+
+            if not session_ok:
+                if attempt == 0 and storage.exists("userid") and storage.exists("password"):
+                    msg = await update.effective_chat.send_message(
+                        "🔄 세션 만료. 자동 재로그인 중..."
+                    )
+                    new_etsid = await get_etsid(
+                        storage.load("userid"),
+                        storage.load("password"),
+                        storage,
+                    )
+                    if new_etsid:
+                        storage.save("etsid", new_etsid)
+                        await msg.edit_text("✅ 재로그인 성공. 공감 시작...")
+                        continue
+                    else:
+                        await msg.edit_text(
+                            "❌ 재로그인 실패. /login 으로 다시 시도하세요."
+                        )
+                        return
                 else:
-                    await msg.edit_text(
-                        "❌ 재로그인 실패. /login 으로 다시 시도하세요."
+                    await update.message.reply_text(
+                        "❌ 세션이 유효하지 않습니다. /login 을 실행하세요."
                     )
                     return
-            else:
-                await update.message.reply_text(
-                    "❌ 세션이 유효하지 않습니다. /login 을 실행하세요."
-                )
-                return
 
-        checkpoint = bot.read_checkpoint()
+            checkpoint = bot.read_checkpoint()
 
-        init_lines = ["⏳ 공감 진행 중...", "━━━━░░░░░░░░░░░░ 0개", "📄 1페이지 탐색 중"]
-        if checkpoint.get("post_created_at"):
-            init_lines.append(f"🔖 {_fmt_created_at(checkpoint['post_created_at'])} 이후 게시글만 탐색")
-        msg = await update.effective_chat.send_message("\n".join(init_lines))
-
-        def _progress(n: int, page: int) -> None:
-            if n % 5 != 0:
-                return
-            lines = ["⏳ 공감 진행 중...", f"━━━━░░░░░░░░░░░░ {n}개", f"📄 {page}페이지 탐색 중"]
+            init_lines = ["⏳ 공감 진행 중...", "━━━━░░░░░░░░░░░░ 0개", "📄 1페이지 탐색 중"]
             if checkpoint.get("post_created_at"):
-                lines.append(f"🔖 {_fmt_created_at(checkpoint['post_created_at'])} 이후 게시글만 탐색")
-            fut = asyncio.run_coroutine_threadsafe(_safe_edit(msg, "\n".join(lines)), loop)
-            try:
-                fut.result(timeout=10)
-            except Exception:
-                pass
+                init_lines.append(f"🔖 {_fmt_created_at(checkpoint['post_created_at'])} 이후 게시글만 탐색")
+            msg = await update.effective_chat.send_message("\n".join(init_lines))
 
-        skip_keywords = _get_skip_keywords()
-        result = await loop.run_in_executor(None, bot.start, _progress, skip_keywords)
+            def _progress(n: int, page: int) -> None:
+                if n % 5 != 0:
+                    return
+                lines = ["⏳ 공감 진행 중...", f"━━━━░░░░░░░░░░░░ {n}개", f"📄 {page}페이지 탐색 중"]
+                if checkpoint.get("post_created_at"):
+                    lines.append(f"🔖 {_fmt_created_at(checkpoint['post_created_at'])} 이후 게시글만 탐색")
+                fut = asyncio.run_coroutine_threadsafe(_safe_edit(msg, "\n".join(lines)), loop)
+                try:
+                    fut.result(timeout=10)
+                except Exception:
+                    pass
 
-        KST = timezone(timedelta(hours=9))
-        now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
-        storage.save("last_run_time", now_kst)
+            skip_keywords = _get_skip_keywords()
+            result = await loop.run_in_executor(None, bot.start, _progress, skip_keywords)
 
-        if result["success"]:
-            processed = result["processed"]
-            skipped = result.get("skipped", 0)
-            page = result.get("final_page", 1)
-            last_created_at = result.get("last_created_at", "")
-            last_title = result.get("last_title", "")
-            now_str = datetime.now(KST).strftime("%H:%M")
-            fmt_ca = _fmt_created_at(last_created_at) if last_created_at else "?"
-            if processed > 0 or skipped > 0:
-                _append_run_stat(bot.target_board, processed, skipped, now_kst)
-            skip_line = f"\n🚫 건너뜀 {skipped}개" if skipped else ""
-            if processed == 0:
-                await _safe_edit(msg, (
-                    f"✅ 이미 최신 상태입니다\n"
-                    f"━━━━━━━━━━━━━━━━\n"
-                    f"📌 {fmt_ca} 이후 새 게시글 없음\n"
-                    f"   └ {last_title}\n"
-                    f"🕐 {now_str}{skip_line}"
-                ))
+            KST = timezone(timedelta(hours=9))
+            now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+            storage.save("last_run_time", now_kst)
+
+            if result["success"]:
+                processed = result["processed"]
+                skipped = result.get("skipped", 0)
+                page = result.get("final_page", 1)
+                last_created_at = result.get("last_created_at", "")
+                last_title = result.get("last_title", "")
+                now_str = datetime.now(KST).strftime("%H:%M")
+                fmt_ca = _fmt_created_at(last_created_at) if last_created_at else "?"
+                if processed > 0 or skipped > 0:
+                    _append_run_stat(bot.target_board, processed, skipped, now_kst)
+                skip_line = f"\n🚫 건너뜀 {skipped}개" if skipped else ""
+                if processed == 0:
+                    await _safe_edit(msg, (
+                        f"✅ 이미 최신 상태입니다\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"📌 {fmt_ca} 이후 새 게시글 없음\n"
+                        f"   └ {last_title}\n"
+                        f"🕐 {now_str}{skip_line}"
+                    ))
+                else:
+                    await _safe_edit(msg, (
+                        f"✅ 공감 완료  |  🆕 신규 +{processed}개\n"
+                        f"━━━━━━━━━━━━━━━━ {processed}개\n"
+                        f"📄 {page}페이지  |  🕐 {now_str}\n"
+                        f"📌 {fmt_ca} 게시글까지\n"
+                        f"   └ {last_title}{skip_line}"
+                    ))
             else:
-                await _safe_edit(msg, (
-                    f"✅ 공감 완료  |  🆕 신규 +{processed}개\n"
-                    f"━━━━━━━━━━━━━━━━ {processed}개\n"
-                    f"📄 {page}페이지  |  🕐 {now_str}\n"
-                    f"📌 {fmt_ca} 게시글까지\n"
-                    f"   └ {last_title}{skip_line}"
-                ))
-        else:
-            await _safe_edit(msg, "❌ 공감 도중 오류가 발생했습니다.")
-        return
+                await _safe_edit(msg, "❌ 공감 도중 오류가 발생했습니다.")
+            return
 
 
 # ── /status ───────────────────────────────────────────────────────────────
@@ -436,49 +442,55 @@ async def _run_scheduled_vote(app: "Application") -> None:
         await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 실패: /login 먼저 실행하세요.")
         return
 
-    cfg = load_config()
-    loop = asyncio.get_running_loop()
-    try:
-        bot = Main(cfg)
-        session_ok = await loop.run_in_executor(None, bot.check_session, bot.target_board)
-        if not session_ok:
-            if storage.exists("userid") and storage.exists("password"):
-                new_etsid = await get_etsid(storage.load("userid"), storage.load("password"), storage)
-                if new_etsid:
-                    storage.save("etsid", new_etsid)
-                    bot = Main(cfg)
+    if _vote_lock.locked():
+        logging.info("스케줄 실행 건너뜀: 이미 vote 진행 중")
+        return
+
+    async with _vote_lock:
+        cfg = load_config()
+        loop = asyncio.get_running_loop()
+        try:
+            bot = Main(cfg)
+            session_ok = await loop.run_in_executor(None, bot.check_session, bot.target_board)
+            if not session_ok:
+                if storage.exists("userid") and storage.exists("password"):
+                    new_etsid = await get_etsid(storage.load("userid"), storage.load("password"), storage)
+                    if new_etsid:
+                        storage.save("etsid", new_etsid)
+                        bot = Main(cfg)
+                    else:
+                        await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 실패: 재로그인 실패. /login 을 실행하세요.")
+                        return
                 else:
-                    await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 실패: 재로그인 실패. /login 을 실행하세요.")
+                    await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 실패: 세션 만료. /login 을 실행하세요.")
                     return
+
+            skip_keywords = _get_skip_keywords()
+            result = await loop.run_in_executor(None, bot.start, None, skip_keywords)
+
+            KST = timezone(timedelta(hours=9))
+            now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+            storage.save("last_run_time", now_kst)
+            now_str = datetime.now(KST).strftime("%H:%M")
+
+            if result["success"]:
+                voted = result["processed"]
+                skipped = result.get("skipped", 0)
+                if voted > 0 or skipped > 0:
+                    _append_run_stat(bot.target_board, voted, skipped, now_kst)
+                if voted == 0:
+                    msg = f"⏰ 자동 실행 — 새 게시글 없음 ({now_str})"
+                else:
+                    msg = f"⏰ 자동 실행 완료 — +{voted}개 공감"
+                    if skipped:
+                        msg += f" / {skipped}개 건너뜀"
+                    msg += f" ({now_str})"
+                await app.bot.send_message(ALLOWED_CHAT_ID, msg)
             else:
-                await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 실패: 세션 만료. /login 을 실행하세요.")
-                return
-
-        skip_keywords = _get_skip_keywords()
-        result = await loop.run_in_executor(None, bot.start, None, skip_keywords)
-
-        KST = timezone(timedelta(hours=9))
-        now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
-        storage.save("last_run_time", now_kst)
-        now_str = datetime.now(KST).strftime("%H:%M")
-
-        if result["success"]:
-            voted = result["processed"]
-            skipped = result.get("skipped", 0)
-            _append_run_stat(bot.target_board, voted, skipped, now_kst)
-            if voted == 0:
-                msg = f"⏰ 자동 실행 — 새 게시글 없음 ({now_str})"
-            else:
-                msg = f"⏰ 자동 실행 완료 — +{voted}개 공감"
-                if skipped:
-                    msg += f" / {skipped}개 건너뜀"
-                msg += f" ({now_str})"
-            await app.bot.send_message(ALLOWED_CHAT_ID, msg)
-        else:
-            await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 오류가 발생했습니다.")
-    except Exception as e:
-        logging.error(f"스케줄 실행 오류: {e}")
-        await app.bot.send_message(ALLOWED_CHAT_ID, f"⏰ 자동 실행 오류: {e}")
+                await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 오류가 발생했습니다.")
+        except Exception as e:
+            logging.error(f"스케줄 실행 오류: {e}")
+            await app.bot.send_message(ALLOWED_CHAT_ID, f"⏰ 자동 실행 오류: {e}")
 
 
 # ── /addskip /removeskip /listskip ────────────────────────────────────────
@@ -605,6 +617,7 @@ def main():
     app = (
         Application.builder()
         .token(TELEGRAM_TOKEN)
+        .concurrent_updates(True)
         .post_init(_post_init)
         .post_shutdown(_post_shutdown)
         .build()
