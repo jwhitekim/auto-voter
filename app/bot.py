@@ -18,8 +18,16 @@ from .handlers.auth import (
 )
 from .handlers.board import cmd_setboard, setboard_callback
 from .handlers.vote import cmd_vote
-from .handlers.skip import cmd_addskip, cmd_removeskip, cmd_listskip
-from .handlers.stats import cmd_stats, cmd_togglestat, cmd_deletestat
+from .handlers.skip import (
+    ASK_SKIP_ADD, ASK_SKIP_REMOVE,
+    cmd_addskip, cmd_removeskip, cmd_listskip,
+    addskip_received, removeskip_received, skip_cancel,
+)
+from .handlers.stats import (
+    ASK_TOGGLE_IDX, ASK_DELETE_IDX,
+    cmd_stats, cmd_togglestat, cmd_deletestat,
+    togglestat_received, deletestat_received, stat_cancel,
+)
 from .handlers.misc import cmd_start, cmd_status, cmd_logout
 
 load_dotenv()
@@ -58,18 +66,50 @@ def main():
         fallbacks=[CommandHandler("cancel", login_cancel)],
     )
 
+    addskip_conv = ConversationHandler(
+        entry_points=[CommandHandler("addskip", cmd_addskip)],
+        states={
+            ASK_SKIP_ADD: [MessageHandler(filters.TEXT & ~filters.COMMAND, addskip_received)],
+        },
+        fallbacks=[CommandHandler("cancel", skip_cancel)],
+    )
+
+    removeskip_conv = ConversationHandler(
+        entry_points=[CommandHandler("removeskip", cmd_removeskip)],
+        states={
+            ASK_SKIP_REMOVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, removeskip_received)],
+        },
+        fallbacks=[CommandHandler("cancel", skip_cancel)],
+    )
+
+    togglestat_conv = ConversationHandler(
+        entry_points=[CommandHandler("togglestat", cmd_togglestat)],
+        states={
+            ASK_TOGGLE_IDX: [MessageHandler(filters.TEXT & ~filters.COMMAND, togglestat_received)],
+        },
+        fallbacks=[CommandHandler("cancel", stat_cancel)],
+    )
+
+    deletestat_conv = ConversationHandler(
+        entry_points=[CommandHandler("deletestat", cmd_deletestat)],
+        states={
+            ASK_DELETE_IDX: [MessageHandler(filters.TEXT & ~filters.COMMAND, deletestat_received)],
+        },
+        fallbacks=[CommandHandler("cancel", stat_cancel)],
+    )
+
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(login_conv)
     app.add_handler(session_conv)
     app.add_handler(CommandHandler("setboard", cmd_setboard))
     app.add_handler(CallbackQueryHandler(setboard_callback, pattern="^(sb:|bp:)"))
     app.add_handler(CommandHandler("vote", cmd_vote))
-    app.add_handler(CommandHandler("addskip", cmd_addskip))
-    app.add_handler(CommandHandler("removeskip", cmd_removeskip))
+    app.add_handler(addskip_conv)
+    app.add_handler(removeskip_conv)
     app.add_handler(CommandHandler("listskip", cmd_listskip))
     app.add_handler(CommandHandler("stats", cmd_stats))
-    app.add_handler(CommandHandler("togglestat", cmd_togglestat))
-    app.add_handler(CommandHandler("deletestat", cmd_deletestat))
+    app.add_handler(togglestat_conv)
+    app.add_handler(deletestat_conv)
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("logout", cmd_logout))
 

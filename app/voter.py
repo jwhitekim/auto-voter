@@ -210,6 +210,7 @@ class Main(EverytimeBot):
             "last_article_created_at": "post_created_at",
             "last_voted_at":           "voted_at",
         }
+        logging.info(f"[DIAG] read_checkpoint 시작, target_board={self.target_board!r}")
         try:
             res = (
                 self.supabase.table("bot_state")
@@ -218,16 +219,22 @@ class Main(EverytimeBot):
                 .execute()
             )
             rows = {row["key"]: row["value"] for row in (res.data or [])}
+            logging.info(f"[DIAG] bot_state 조회 결과: {len(rows)}개 키 — {list(rows.keys())}")
+            logging.info(f"[DIAG] last_board_id={rows.get('last_board_id')!r}, target_board={self.target_board!r}")
             if rows.get("last_board_id") != self.target_board:
-                logging.info(f"게시판 변경 감지 ({rows.get('last_board_id')} → {self.target_board}), 체크포인트 초기화")
+                logging.warning(
+                    f"[DIAG] 게시판 불일치 → 체크포인트 초기화 "
+                    f"(stored={rows.get('last_board_id')!r}, target={self.target_board!r})"
+                )
                 return empty
             out = empty.copy()
             for key, field in key_map.items():
                 if key in rows:
                     out[field] = rows[key]
+            logging.info(f"[DIAG] 체크포인트 반환: post_id={out['post_id']!r}, post_created_at={out['post_created_at']!r}")
             return out
         except Exception as e:
-            logging.error(f"read_checkpoint 실패: {e}")
+            logging.error(f"[DIAG] read_checkpoint 예외 발생 → 풀스캔 fallback: {type(e).__name__}: {e}")
         return empty
 
     def start(self, progress_callback=None, skip_keywords: list[str] | None = None) -> dict:
@@ -247,6 +254,7 @@ class Main(EverytimeBot):
         last_id = checkpoint["post_id"]
         last_created_at = checkpoint["post_created_at"]
         logging.info(f"마지막 작업 게시글 ID: {last_id}, created_at: {last_created_at}")
+        logging.info(f"[DIAG] 스캔 방식: {'풀스캔 (last_id=None)' if last_id is None else f'부분스캔 (last_id={last_id!r})'}")
 
         def _ts(s):
             try:
