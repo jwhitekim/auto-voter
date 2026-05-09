@@ -1,8 +1,11 @@
 import asyncio
+import json
 import logging
 import os
 from datetime import datetime, timezone, timedelta
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -28,6 +31,39 @@ ALLOWED_CHAT_ID = int(os.environ["TELEGRAM_CHAT_ID"])
 ASK_USER, ASK_PASS, ASK_SESSION = range(3)
 
 storage = SecureStorage()
+_scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
+
+
+def _get_skip_keywords() -> list[str]:
+    raw = storage.load("skip_keywords")
+    try:
+        return json.loads(raw) if raw else []
+    except Exception:
+        return []
+
+
+def _save_skip_keywords(keywords: list[str]) -> None:
+    storage.save("skip_keywords", json.dumps(keywords))
+
+
+def _append_run_stat(board_id: str, voted: int, skipped: int, ran_at: str) -> None:
+    raw = storage.load("run_history")
+    history = json.loads(raw) if raw else []
+    history.append({"board_id": board_id, "voted": voted, "skipped": skipped, "ran_at": ran_at})
+    storage.save("run_history", json.dumps(history[-30:]))
+
+
+def _update_scheduler(app: "Application", hour: int, minute: int) -> None:
+    if not _scheduler.running:
+        _scheduler.start()
+    _scheduler.remove_all_jobs()
+    _scheduler.add_job(
+        _run_scheduled_vote,
+        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
+        args=[app],
+        id="auto_vote",
+        replace_existing=True,
+    )
 
 
 logging.basicConfig(
@@ -75,6 +111,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/setsession — etsid 수동 입력\n"
         "/setboard — 공감할 게시판 선택\n"
         "/vote — 공감 봇 실행\n"
+        "/setschedule HH:MM — 자동 실행 예약\n"
+        "/cancelschedule — 자동 실행 취소\n"
+        "/addskip 키워드 — 건너뛸 키워드 추가\n"
+        "/removeskip 키워드 — 키워드 삭제\n"
+        "/listskip — 등록된 키워드 목록\n"
+        "/stats — 공감 통계\n"
         "/status — 현재 상태 확인\n"
         "/logout — 저장된 정보 삭제"
     )
@@ -293,25 +335,31 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
-        result = await loop.run_in_executor(None, bot.start, _progress)
+        skip_keywords = _get_skip_keywords()
+        result = await loop.run_in_executor(None, bot.start, _progress, skip_keywords)
 
         KST = timezone(timedelta(hours=9))
-        storage.save("last_run_time", datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"))
+        now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+        storage.save("last_run_time", now_kst)
 
         if result["success"]:
             processed = result["processed"]
+            skipped = result.get("skipped", 0)
             page = result.get("final_page", 1)
             last_created_at = result.get("last_created_at", "")
             last_title = result.get("last_title", "")
             now_str = datetime.now(KST).strftime("%H:%M")
             fmt_ca = _fmt_created_at(last_created_at) if last_created_at else "?"
+            if processed > 0 or skipped > 0:
+                _append_run_stat(bot.target_board, processed, skipped, now_kst)
+            skip_line = f"\n🚫 건너뜀 {skipped}개" if skipped else ""
             if processed == 0:
                 await _safe_edit(msg, (
                     f"✅ 이미 최신 상태입니다\n"
                     f"━━━━━━━━━━━━━━━━\n"
                     f"📌 {fmt_ca} 이후 새 게시글 없음\n"
                     f"   └ {last_title}\n"
-                    f"🕐 {now_str}"
+                    f"🕐 {now_str}{skip_line}"
                 ))
             else:
                 await _safe_edit(msg, (
@@ -319,7 +367,7 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"━━━━━━━━━━━━━━━━ {processed}개\n"
                     f"📄 {page}페이지  |  🕐 {now_str}\n"
                     f"📌 {fmt_ca} 게시글까지\n"
-                    f"   └ {last_title}"
+                    f"   └ {last_title}{skip_line}"
                 ))
         else:
             await _safe_edit(msg, "❌ 공감 도중 오류가 발생했습니다.")
@@ -358,11 +406,13 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cfg = load_config()
     saved_board = storage.load("board_id")
     current_board = saved_board if saved_board else cfg["bot"]["board_id"]
+    schedule_time = storage.load("schedule_time")
 
     await update.message.reply_text(
         f"🔐 로그인: {'✅ 저장됨' if etsid_saved else '❌ 없음'}\n"
         f"📡 세션: {'✅ 유효' if session_valid else '❌ 만료/없음'}\n"
         f"📋 게시판: {current_board}\n"
+        f"⏰ 자동 실행: {schedule_time + ' (KST)' if schedule_time else '없음'}\n"
         f"🕐 마지막 실행: {storage.load('last_run_time') or '없음'}\n"
         f"📌 마지막 처리 글: {last_title or '없음'}"
     )
@@ -378,10 +428,187 @@ async def cmd_logout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ 저장된 정보가 모두 삭제되었습니다.")
 
 
+# ── 스케줄 자동 실행 ──────────────────────────────────────────────────────
+
+async def _run_scheduled_vote(app: "Application") -> None:
+    logging.info("스케줄 자동 실행 시작")
+    if not storage.exists("etsid"):
+        await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 실패: /login 먼저 실행하세요.")
+        return
+
+    cfg = load_config()
+    loop = asyncio.get_running_loop()
+    try:
+        bot = Main(cfg)
+        session_ok = await loop.run_in_executor(None, bot.check_session, bot.target_board)
+        if not session_ok:
+            if storage.exists("userid") and storage.exists("password"):
+                new_etsid = await get_etsid(storage.load("userid"), storage.load("password"), storage)
+                if new_etsid:
+                    storage.save("etsid", new_etsid)
+                    bot = Main(cfg)
+                else:
+                    await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 실패: 재로그인 실패. /login 을 실행하세요.")
+                    return
+            else:
+                await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 실패: 세션 만료. /login 을 실행하세요.")
+                return
+
+        skip_keywords = _get_skip_keywords()
+        result = await loop.run_in_executor(None, bot.start, None, skip_keywords)
+
+        KST = timezone(timedelta(hours=9))
+        now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+        storage.save("last_run_time", now_kst)
+        now_str = datetime.now(KST).strftime("%H:%M")
+
+        if result["success"]:
+            voted = result["processed"]
+            skipped = result.get("skipped", 0)
+            _append_run_stat(bot.target_board, voted, skipped, now_kst)
+            if voted == 0:
+                msg = f"⏰ 자동 실행 — 새 게시글 없음 ({now_str})"
+            else:
+                msg = f"⏰ 자동 실행 완료 — +{voted}개 공감"
+                if skipped:
+                    msg += f" / {skipped}개 건너뜀"
+                msg += f" ({now_str})"
+            await app.bot.send_message(ALLOWED_CHAT_ID, msg)
+        else:
+            await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 오류가 발생했습니다.")
+    except Exception as e:
+        logging.error(f"스케줄 실행 오류: {e}")
+        await app.bot.send_message(ALLOWED_CHAT_ID, f"⏰ 자동 실행 오류: {e}")
+
+
+# ── /addskip /removeskip /listskip ────────────────────────────────────────
+
+async def cmd_addskip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    if not context.args:
+        await update.message.reply_text("사용법: /addskip 키워드")
+        return
+    kw = " ".join(context.args).strip()
+    keywords = _get_skip_keywords()
+    if kw in keywords:
+        await update.message.reply_text(f"⚠️ 이미 등록된 키워드: {kw}")
+        return
+    keywords.append(kw)
+    _save_skip_keywords(keywords)
+    await update.message.reply_text(f"✅ 추가됨: {kw}  (총 {len(keywords)}개)")
+
+
+async def cmd_removeskip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    if not context.args:
+        await update.message.reply_text("사용법: /removeskip 키워드")
+        return
+    kw = " ".join(context.args).strip()
+    keywords = _get_skip_keywords()
+    if kw not in keywords:
+        await update.message.reply_text(f"⚠️ 등록되지 않은 키워드: {kw}")
+        return
+    keywords.remove(kw)
+    _save_skip_keywords(keywords)
+    await update.message.reply_text(f"✅ 삭제됨: {kw}  (남은 {len(keywords)}개)")
+
+
+async def cmd_listskip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    keywords = _get_skip_keywords()
+    if not keywords:
+        await update.message.reply_text("등록된 키워드가 없습니다.")
+        return
+    lines = "\n".join(f"• {kw}" for kw in keywords)
+    await update.message.reply_text(f"🚫 건너뛸 키워드 ({len(keywords)}개):\n{lines}")
+
+
+# ── /stats ────────────────────────────────────────────────────────────────
+
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    raw = storage.load("run_history")
+    if not raw:
+        await update.message.reply_text("아직 실행 기록이 없습니다.")
+        return
+    history = json.loads(raw)
+    total_voted = sum(h["voted"] for h in history)
+    total_skipped = sum(h["skipped"] for h in history)
+
+    recent = history[-7:]
+    bars = ""
+    for h in recent:
+        date = h["ran_at"][5:10]
+        n = h["voted"]
+        bar = "█" * min(max(n // 5, 1 if n > 0 else 0), 15)
+        bars += f"{date}  {bar or '·'}  {n}개\n"
+
+    await update.message.reply_text(
+        f"📊 공감 통계 (최근 {len(history)}회)\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"총 공감: {total_voted}개  |  건너뜀: {total_skipped}개\n\n"
+        f"최근 7회:\n{bars}"
+    )
+
+
+# ── /setschedule /cancelschedule ──────────────────────────────────────────
+
+async def cmd_setschedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    if not context.args:
+        await update.message.reply_text("사용법: /setschedule HH:MM  (예: /setschedule 08:00)")
+        return
+    try:
+        hour, minute = map(int, context.args[0].split(":"))
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError
+    except Exception:
+        await update.message.reply_text("❌ 형식이 잘못되었습니다. 예: /setschedule 08:00")
+        return
+    storage.save("schedule_time", f"{hour:02d}:{minute:02d}")
+    _update_scheduler(context.application, hour, minute)
+    await update.message.reply_text(f"✅ 매일 {hour:02d}:{minute:02d} (KST)에 자동 실행됩니다.")
+
+
+async def cmd_cancelschedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    storage.delete("schedule_time")
+    _scheduler.remove_all_jobs()
+    await update.message.reply_text("✅ 자동 실행이 취소되었습니다.")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────
 
+async def _post_init(app: Application) -> None:
+    schedule_time = storage.load("schedule_time")
+    if schedule_time:
+        try:
+            hour, minute = map(int, schedule_time.split(":"))
+            _update_scheduler(app, hour, minute)
+            logging.info(f"스케줄 복원: 매일 {hour:02d}:{minute:02d} KST")
+        except Exception as e:
+            logging.error(f"스케줄 복원 실패: {e}")
+
+
+async def _post_shutdown(app: Application) -> None:
+    if _scheduler.running:
+        _scheduler.shutdown()
+
+
 def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .post_init(_post_init)
+        .post_shutdown(_post_shutdown)
+        .build()
+    )
 
     login_conv = ConversationHandler(
         entry_points=[CommandHandler("login", login_start)],
@@ -406,6 +633,12 @@ def main():
     app.add_handler(CommandHandler("setboard", cmd_setboard))
     app.add_handler(CallbackQueryHandler(setboard_callback, pattern="^(sb:|bp:)"))
     app.add_handler(CommandHandler("vote", cmd_vote))
+    app.add_handler(CommandHandler("setschedule", cmd_setschedule))
+    app.add_handler(CommandHandler("cancelschedule", cmd_cancelschedule))
+    app.add_handler(CommandHandler("addskip", cmd_addskip))
+    app.add_handler(CommandHandler("removeskip", cmd_removeskip))
+    app.add_handler(CommandHandler("listskip", cmd_listskip))
+    app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("logout", cmd_logout))
 

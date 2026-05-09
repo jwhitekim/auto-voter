@@ -191,6 +191,7 @@ class Main(EverytimeBot):
             ("last_article_title",      post_title),
             ("last_article_created_at", post_created_at),
             ("last_voted_at",           voted_at or self._now_kst()),
+            ("last_board_id",           self.target_board),
         ]
         try:
             for key, value in entries:
@@ -200,37 +201,9 @@ class Main(EverytimeBot):
         except Exception as e:
             logging.error(f"save_checkpoint 실패: {e}")
 
-    def read_last_id(self) -> str | None:
-        try:
-            res = (
-                self.supabase.table("bot_state")
-                .select("value")
-                .eq("key", "last_article_id")
-                .execute()
-            )
-            if res.data:
-                return res.data[0]["value"]
-        except Exception as e:
-            logging.error(f"read_last_id 실패: {e}")
-        return None
-
-    def read_last_title(self) -> str:
-        try:
-            res = (
-                self.supabase.table("bot_state")
-                .select("value")
-                .eq("key", "last_article_title")
-                .execute()
-            )
-            if res.data:
-                return res.data[0]["value"]
-        except Exception as e:
-            logging.error(f"read_last_title 실패: {e}")
-        return ""
-
     def read_checkpoint(self) -> dict:
-        keys = ["last_article_id", "last_article_title", "last_article_created_at", "last_voted_at"]
-        out = {"post_id": None, "post_title": "", "post_created_at": "", "voted_at": ""}
+        empty = {"post_id": None, "post_title": "", "post_created_at": "", "voted_at": ""}
+        keys = ["last_article_id", "last_article_title", "last_article_created_at", "last_voted_at", "last_board_id"]
         key_map = {
             "last_article_id":         "post_id",
             "last_article_title":      "post_title",
@@ -244,17 +217,23 @@ class Main(EverytimeBot):
                 .in_("key", keys)
                 .execute()
             )
-            for row in (res.data or []):
-                field = key_map.get(row["key"])
-                if field:
-                    out[field] = row["value"]
+            rows = {row["key"]: row["value"] for row in (res.data or [])}
+            if rows.get("last_board_id") != self.target_board:
+                logging.info(f"게시판 변경 감지 ({rows.get('last_board_id')} → {self.target_board}), 체크포인트 초기화")
+                return empty
+            out = empty.copy()
+            for key, field in key_map.items():
+                if key in rows:
+                    out[field] = rows[key]
+            return out
         except Exception as e:
             logging.error(f"read_checkpoint 실패: {e}")
-        return out
+        return empty
 
-    def start(self, progress_callback=None) -> dict:
+    def start(self, progress_callback=None, skip_keywords: list[str] | None = None) -> dict:
         max_pages = self.cfg["bot"]["max_pages"]
         processed = 0
+        skipped = 0
         new_latest_id = None
         new_latest_title = None
         new_latest_created_at = None
@@ -262,7 +241,7 @@ class Main(EverytimeBot):
 
         if not self.check_session(self.target_board):
             logging.error("세션이 유효하지 않아 종료합니다.")
-            return {"processed": 0, "last_id": None, "last_title": None, "last_created_at": None, "final_page": 0, "success": False}
+            return {"processed": 0, "skipped": 0, "last_id": None, "last_title": None, "last_created_at": None, "final_page": 0, "success": False}
 
         checkpoint = self.read_checkpoint()
         last_id = checkpoint["post_id"]
@@ -300,6 +279,7 @@ class Main(EverytimeBot):
                         self.save_checkpoint(new_latest_id, new_latest_title or "", new_latest_created_at or "")
                     return {
                         "processed": processed,
+                        "skipped": skipped,
                         "last_id": new_latest_id,
                         "last_title": new_latest_title,
                         "last_created_at": new_latest_created_at,
@@ -317,12 +297,19 @@ class Main(EverytimeBot):
                         self.save_checkpoint(new_latest_id, new_latest_title or "", new_latest_created_at or "")
                     return {
                         "processed": processed,
+                        "skipped": skipped,
                         "last_id": new_latest_id,
                         "last_title": new_latest_title,
                         "last_created_at": new_latest_created_at,
                         "final_page": final_page,
                         "success": True,
                     }
+
+                title = (item.get('title') or '').lower()
+                if skip_keywords and any(kw.lower() in title for kw in skip_keywords):
+                    logging.info(f"[{item['id']}] 건너뜀 (키워드 일치): {item.get('title')}")
+                    skipped += 1
+                    continue
 
                 self.push_vote(article_id=item['id'])
                 processed += 1
@@ -338,6 +325,7 @@ class Main(EverytimeBot):
 
         return {
             "processed": processed,
+            "skipped": skipped,
             "last_id": new_latest_id,
             "last_title": new_latest_title,
             "last_created_at": new_latest_created_at,
