@@ -134,6 +134,25 @@ class EverytimeBot:
             time.sleep(self.cfg["timing"]["page_delay"])
         return count, -1
 
+    def get_board_list(self) -> list[dict]:
+        res_text = self._post("/find/community/web", data={})
+        if not res_text or "<response>" not in res_text:
+            logging.error(f"게시판 목록 응답 오류: {res_text[:200] if res_text else 'empty'}")
+            return []
+        try:
+            root = ElementTree.fromstring(res_text)
+            boards = []
+            for tag in ("board", "community"):
+                for b in root.findall(f".//{tag}"):
+                    bid = b.get("id")
+                    name = b.get("name", "") or b.get("title", "")
+                    if bid and name:
+                        boards.append({"id": bid, "name": name})
+            return boards
+        except Exception as e:
+            logging.error(f"게시판 목록 파싱 에러: {e}")
+            return []
+
     def push_vote(self, article_id):
         data = {'id': article_id, 'vote': '1'}
         try:
@@ -155,7 +174,8 @@ class EverytimeBot:
 class Main(EverytimeBot):
     def __init__(self, cfg):
         super().__init__(cfg)
-        self.target_board = cfg["bot"]["board_id"]
+        saved_board = self.storage.load("board_id")
+        self.target_board = saved_board if saved_board else cfg["bot"]["board_id"]
         self.id_title_map: dict[str, str] = {}
 
     def _now(self) -> str:

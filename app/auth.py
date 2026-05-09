@@ -1,65 +1,40 @@
 import asyncio
 import json
 import logging
-import os
 import random
-from datetime import datetime, timezone
 
 
-def _get_supabase():
-    try:
-        from supabase import create_client
-        url = os.environ.get("SUPABASE_URL", "").strip()
-        key = os.environ.get("SUPABASE_KEY", "").strip()
-        if url and key:
-            return create_client(url, key)
-    except Exception as e:
-        logging.warning(f"Supabase 클라이언트 생성 실패: {e}")
-    return None
-
-
-async def save_browser_state(context, supabase) -> None:
-    if supabase is None:
-        return
-    try:
-        state = await context.storage_state()
-        supabase.table("bot_state").upsert({
-            "key": "browser_state",
-            "value": json.dumps(state),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }).execute()
-        logging.info("브라우저 상태 저장됨")
-    except Exception as e:
-        logging.warning(f"브라우저 상태 저장 실패: {e}")
-
-
-async def load_browser_state(supabase) -> dict | None:
-    if supabase is None:
+def _load_browser_state(storage) -> dict | None:
+    if storage is None:
         return None
     try:
-        res = (
-            supabase.table("bot_state")
-            .select("value")
-            .eq("key", "browser_state")
-            .execute()
-        )
-        if res.data:
-            return json.loads(res.data[0]["value"])
+        value = storage.load("browser_state")
+        if value:
+            return json.loads(value)
     except Exception as e:
         logging.warning(f"브라우저 상태 로드 실패: {e}")
     return None
 
 
-async def get_etsid(userid: str, password: str) -> str | None:
-    supabase = _get_supabase()
+async def _save_browser_state(context, storage) -> None:
+    if storage is None:
+        return
+    try:
+        state = await context.storage_state()
+        storage.save("browser_state", json.dumps(state))
+        logging.info("브라우저 상태 저장됨")
+    except Exception as e:
+        logging.warning(f"브라우저 상태 저장 실패: {e}")
 
+
+async def get_etsid(userid: str, password: str, storage=None) -> str | None:
     try:
         from playwright.async_api import async_playwright
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
 
-            stored_state = await load_browser_state(supabase)
+            stored_state = _load_browser_state(storage)
             if stored_state:
                 context = await browser.new_context(storage_state=stored_state)
                 logging.info("저장된 브라우저 상태로 컨텍스트 복원")
@@ -120,7 +95,7 @@ async def get_etsid(userid: str, password: str) -> str | None:
             )
 
             if etsid:
-                await save_browser_state(context, supabase)
+                await _save_browser_state(context, storage)
                 logging.info("etsid 획득 성공")
             else:
                 logging.warning("etsid 없음 — 쿠키 목록 확인 요망")

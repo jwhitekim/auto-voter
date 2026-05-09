@@ -4,9 +4,10 @@ import os
 from datetime import datetime, timezone, timedelta
 
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ConversationHandler,
     ContextTypes,
@@ -27,8 +28,6 @@ ALLOWED_CHAT_ID = int(os.environ["TELEGRAM_CHAT_ID"])
 ASK_USER, ASK_PASS, ASK_SESSION = range(3)
 
 storage = SecureStorage()
-_last_run_time: str | None = None
-_last_bot: "Main | None" = None
 
 
 logging.basicConfig(
@@ -74,6 +73,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📋 사용 가능한 명령어:\n"
         "/login — 아이디/비번으로 자동 로그인\n"
         "/setsession — etsid 수동 입력\n"
+        "/setboard — 공감할 게시판 선택\n"
         "/vote — 공감 봇 실행\n"
         "/status — 현재 상태 확인\n"
         "/logout — 저장된 정보 삭제"
@@ -107,7 +107,7 @@ async def login_got_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
     userid = context.user_data.pop("userid", "")
     msg = await update.effective_chat.send_message("🔄 로그인 중...")
 
-    etsid = await get_etsid(userid, password)
+    etsid = await get_etsid(userid, password, storage)
 
     if etsid:
         storage.save("userid", userid)
@@ -148,10 +148,79 @@ async def setsession_got(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+# ── /setboard ────────────────────────────────────────────────────────────
+
+def _build_board_keyboard(boards: list[dict], page: int) -> InlineKeyboardMarkup:
+    per_page = 10
+    start = page * per_page
+    end = start + per_page
+    rows = [
+        [InlineKeyboardButton(b["name"], callback_data=f"sb:{b['id']}")]
+        for b in boards[start:end]
+    ]
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀ 이전", callback_data=f"bp:{page - 1}"))
+    if end < len(boards):
+        nav.append(InlineKeyboardButton("다음 ▶", callback_data=f"bp:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    return InlineKeyboardMarkup(rows)
+
+
+async def cmd_setboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    if not storage.exists("etsid"):
+        await update.message.reply_text("⚠️ /login 먼저 실행하세요.")
+        return
+
+    msg = await update.message.reply_text("🔄 게시판 목록 불러오는 중...")
+    loop = asyncio.get_running_loop()
+    try:
+        cfg = load_config()
+        bot = Main(cfg)
+        boards = await loop.run_in_executor(None, bot.get_board_list)
+    except Exception as e:
+        await msg.edit_text(f"❌ 게시판 목록 조회 실패: {e}")
+        return
+
+    if not boards:
+        await msg.edit_text("❌ 게시판 목록을 가져올 수 없습니다. 세션을 확인하세요.")
+        return
+
+    context.user_data["boards"] = boards
+    await msg.edit_text("📋 게시판을 선택하세요:", reply_markup=_build_board_keyboard(boards, 0))
+
+
+async def setboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not _authorized(update):
+        return
+
+    data = query.data
+
+    if data.startswith("bp:"):
+        page = int(data[3:])
+        boards = context.user_data.get("boards", [])
+        await query.edit_message_reply_markup(reply_markup=_build_board_keyboard(boards, page))
+
+    elif data.startswith("sb:"):
+        board_id = data[3:]
+        boards = context.user_data.get("boards", [])
+        board_name = next((b["name"] for b in boards if b["id"] == board_id), board_id)
+        storage.save("board_id", board_id)
+        await query.edit_message_text(
+            f"✅ 게시판 설정 완료!\n"
+            f"📌 {board_name} ({board_id})\n\n"
+            f"/vote 로 공감을 시작하세요."
+        )
+
+
 # ── /vote ─────────────────────────────────────────────────────────────────
 
 async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global _last_run_time
     if not _authorized(update):
         return
 
@@ -165,24 +234,19 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for attempt in range(2):
         try:
             bot = Main(cfg)
-            print(f"[DEBUG] Main 초기화 성공, etsid: {bot.session.headers.get('Cookie')}")
-        except ValueError as e:
-            print(f"[DEBUG] Main 초기화 ValueError: {e}")
+        except ValueError:
             await update.message.reply_text("⚠️ /login 먼저 실행하세요.")
             return
         except Exception as e:
-            print(f"[DEBUG] Main 초기화 예외: {e}")
+            logging.error(f"Main 초기화 실패: {e}")
             return
 
-
-        print("[DEBUG] check_session 호출 직전")
         try:
             session_ok = await loop.run_in_executor(
                 None, bot.check_session, bot.target_board
             )
-            print(f"[DEBUG] check_session 결과: {session_ok}")
         except Exception as e:
-            print(f"[DEBUG] run_in_executor 예외: {e}")
+            logging.error(f"check_session 실패: {e}")
             return
 
         if not session_ok:
@@ -193,6 +257,7 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 new_etsid = await get_etsid(
                     storage.load("userid"),
                     storage.load("password"),
+                    storage,
                 )
                 if new_etsid:
                     storage.save("etsid", new_etsid)
@@ -230,10 +295,8 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         result = await loop.run_in_executor(None, bot.start, _progress)
 
-        global _last_run_time, _last_bot
         KST = timezone(timedelta(hours=9))
-        _last_run_time = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
-        _last_bot = bot
+        storage.save("last_run_time", datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"))
 
         if result["success"]:
             processed = result["processed"]
@@ -292,10 +355,15 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
+    cfg = load_config()
+    saved_board = storage.load("board_id")
+    current_board = saved_board if saved_board else cfg["bot"]["board_id"]
+
     await update.message.reply_text(
         f"🔐 로그인: {'✅ 저장됨' if etsid_saved else '❌ 없음'}\n"
         f"📡 세션: {'✅ 유효' if session_valid else '❌ 만료/없음'}\n"
-        f"🕐 마지막 실행: {_last_run_time or '없음'}\n"
+        f"📋 게시판: {current_board}\n"
+        f"🕐 마지막 실행: {storage.load('last_run_time') or '없음'}\n"
         f"📌 마지막 처리 글: {last_title or '없음'}"
     )
 
@@ -335,6 +403,8 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(login_conv)
     app.add_handler(session_conv)
+    app.add_handler(CommandHandler("setboard", cmd_setboard))
+    app.add_handler(CallbackQueryHandler(setboard_callback, pattern="^(sb:|bp:)"))
     app.add_handler(CommandHandler("vote", cmd_vote))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("logout", cmd_logout))
