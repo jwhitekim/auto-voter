@@ -285,6 +285,7 @@ class Main(EverytimeBot):
                         "last_created_at": new_latest_created_at,
                         "final_page": final_page,
                         "success": True,
+                        "is_full_scan": last_id is None,
                     }
 
                 # 체크포인트 게시글이 삭제된 경우: 저장된 타임스탬프보다 오래된 글에 도달하면 중단
@@ -303,6 +304,7 @@ class Main(EverytimeBot):
                         "last_created_at": new_latest_created_at,
                         "final_page": final_page,
                         "success": True,
+                        "is_full_scan": last_id is None,
                     }
 
                 title = (item.get('title') or '').lower()
@@ -331,4 +333,5 @@ class Main(EverytimeBot):
             "last_created_at": new_latest_created_at,
             "final_page": final_page,
             "success": True,
+            "is_full_scan": last_id is None,
         }

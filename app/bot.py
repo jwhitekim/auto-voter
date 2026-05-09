@@ -1,11 +1,8 @@
 import asyncio
-import json
 import logging
 import os
 from datetime import datetime, timezone, timedelta
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -20,64 +17,23 @@ from telegram.ext import (
 
 from .auth import get_etsid
 from .voter import Main, load_config
-from .storage import SecureStorage
+from .repository import storage, get_skip_keywords, save_skip_keywords, append_run_stat, load_run_history, save_run_history, delete_run_stat
+from .stats import format_stats_message
+from .scheduler import _scheduler, _vote_lock, update_scheduler
 
 load_dotenv()
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 ALLOWED_CHAT_ID = int(os.environ["TELEGRAM_CHAT_ID"])
 
-# ConversationHandler states
 ASK_USER, ASK_PASS, ASK_SESSION = range(3)
-
-storage = SecureStorage()
-_scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
-_vote_lock = asyncio.Lock()
-
-
-def _get_skip_keywords() -> list[str]:
-    raw = storage.load("skip_keywords")
-    try:
-        return json.loads(raw) if raw else []
-    except Exception:
-        return []
-
-
-def _save_skip_keywords(keywords: list[str]) -> None:
-    storage.save("skip_keywords", json.dumps(keywords))
-
-
-def _append_run_stat(board_id: str, voted: int, skipped: int, ran_at: str) -> None:
-    raw = storage.load("run_history")
-    history = json.loads(raw) if raw else []
-    board_name = storage.load("board_name") or board_id
-    history.append({
-        "board_id": board_id, "board_name": board_name,
-        "voted": voted, "skipped": skipped,
-        "ran_at": ran_at, "is_valid": True,
-    })
-    storage.save("run_history", json.dumps(history[-30:]))
-
-
-def _update_scheduler(app: "Application", hour: int, minute: int) -> None:
-    if not _scheduler.running:
-        _scheduler.start()
-    _scheduler.remove_all_jobs()
-    _scheduler.add_job(
-        _run_scheduled_vote,
-        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
-        args=[app],
-        id="auto_vote",
-        replace_existing=True,
-    )
-
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
-
 logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 def _authorized(update: Update) -> bool:
     return update.effective_chat.id == ALLOWED_CHAT_ID
@@ -118,12 +74,14 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/setboard — 공감할 게시판 선택\n"
         "/vote — 공감 봇 실행\n"
         "/setschedule HH:MM — 자동 실행 예약\n"
+        "/listschedule — 예약 현황 확인\n"
         "/cancelschedule — 자동 실행 취소\n"
         "/addskip 키워드 — 건너뛸 키워드 추가\n"
         "/removeskip 키워드 — 키워드 삭제\n"
         "/listskip — 등록된 키워드 목록\n"
         "/stats — 공감 통계\n"
         "/togglestat <번호> — 레코드 유효/제외 토글\n"
+        "/deletestat <번호> — 레코드 영구 삭제\n"
         "/status — 현재 상태 확인\n"
         "/logout — 저장된 정보 삭제"
     )
@@ -146,8 +104,6 @@ async def login_got_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def login_got_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
     password = update.message.text.strip()
-
-    # 보안을 위해 비밀번호 메시지 즉시 삭제
     try:
         await update.message.delete()
     except Exception:
@@ -155,7 +111,6 @@ async def login_got_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     userid = context.user_data.pop("userid", "")
     msg = await update.effective_chat.send_message("🔄 로그인 중...")
-
     etsid = await get_etsid(userid, password, storage)
 
     if etsid:
@@ -168,7 +123,6 @@ async def login_got_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ 로그인 실패. 아이디/비번을 확인하거나\n"
             "/setsession 으로 수동 입력하세요."
         )
-
     return ConversationHandler.END
 
 
@@ -249,12 +203,10 @@ async def setboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     data = query.data
-
     if data.startswith("bp:"):
         page = int(data[3:])
         boards = context.user_data.get("boards", [])
         await query.edit_message_reply_markup(reply_markup=_build_board_keyboard(boards, page))
-
     elif data.startswith("sb:"):
         board_id = data[3:]
         boards = context.user_data.get("boards", [])
@@ -273,11 +225,9 @@ async def setboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _authorized(update):
         return
-
     if not storage.exists("etsid"):
         await update.message.reply_text("⚠️ /login 먼저 실행하세요.")
         return
-
     if _vote_lock.locked():
         await update.message.reply_text("⚠️ 이미 공감이 실행 중입니다.")
         return
@@ -297,40 +247,29 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             try:
-                session_ok = await loop.run_in_executor(
-                    None, bot.check_session, bot.target_board
-                )
+                session_ok = await loop.run_in_executor(None, bot.check_session, bot.target_board)
             except Exception as e:
                 logging.error(f"check_session 실패: {e}")
                 return
 
             if not session_ok:
                 if attempt == 0 and storage.exists("userid") and storage.exists("password"):
-                    msg = await update.effective_chat.send_message(
-                        "🔄 세션 만료. 자동 재로그인 중..."
-                    )
+                    msg = await update.effective_chat.send_message("🔄 세션 만료. 자동 재로그인 중...")
                     new_etsid = await get_etsid(
-                        storage.load("userid"),
-                        storage.load("password"),
-                        storage,
+                        storage.load("userid"), storage.load("password"), storage
                     )
                     if new_etsid:
                         storage.save("etsid", new_etsid)
                         await msg.edit_text("✅ 재로그인 성공. 공감 시작...")
                         continue
                     else:
-                        await msg.edit_text(
-                            "❌ 재로그인 실패. /login 으로 다시 시도하세요."
-                        )
+                        await msg.edit_text("❌ 재로그인 실패. /login 으로 다시 시도하세요.")
                         return
                 else:
-                    await update.message.reply_text(
-                        "❌ 세션이 유효하지 않습니다. /login 을 실행하세요."
-                    )
+                    await update.message.reply_text("❌ 세션이 유효하지 않습니다. /login 을 실행하세요.")
                     return
 
             checkpoint = bot.read_checkpoint()
-
             init_lines = ["⏳ 공감 진행 중...", "━━━━░░░░░░░░░░░░ 0개", "📄 1페이지 탐색 중"]
             if checkpoint.get("post_created_at"):
                 init_lines.append(f"🔖 {_fmt_created_at(checkpoint['post_created_at'])} 이후 게시글만 탐색")
@@ -348,7 +287,7 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
 
-            skip_keywords = _get_skip_keywords()
+            skip_keywords = get_skip_keywords()
             result = await loop.run_in_executor(None, bot.start, _progress, skip_keywords)
 
             KST = timezone(timedelta(hours=9))
@@ -364,7 +303,7 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 now_str = datetime.now(KST).strftime("%H:%M")
                 fmt_ca = _fmt_created_at(last_created_at) if last_created_at else "?"
                 if processed > 0 or skipped > 0:
-                    _append_run_stat(bot.target_board, processed, skipped, now_kst)
+                    append_run_stat(bot.target_board, processed, skipped, now_kst, result.get("is_full_scan"))
                 skip_line = f"\n🚫 건너뜀 {skipped}개" if skipped else ""
                 if processed == 0:
                     await _safe_edit(msg, (
@@ -395,13 +334,11 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     etsid_saved = storage.exists("etsid")
     session_valid = False
-
     if etsid_saved:
         try:
             cfg = load_config()
-            loop = asyncio.get_running_loop()
             bot = Main(cfg)
-            session_valid = await loop.run_in_executor(
+            session_valid = await asyncio.get_running_loop().run_in_executor(
                 None, bot.check_session, bot.target_board
             )
         except Exception:
@@ -409,17 +346,17 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     last_title = None
     try:
-        cfg = load_config()
-        _tmp = Main(cfg)
-        cp = _tmp.read_checkpoint()
+        cp = Main(load_config()).read_checkpoint()
         last_title = cp.get("post_title") or cp.get("post_id") or None
     except Exception:
         pass
 
     cfg = load_config()
-    saved_board = storage.load("board_id")
-    saved_name = storage.load("board_name")
-    current_board = saved_name or saved_board or cfg["bot"]["board_id"]
+    current_board = (
+        storage.load("board_name")
+        or storage.load("board_id")
+        or cfg["bot"]["board_id"]
+    )
     schedule_time = storage.load("schedule_time")
 
     await update.message.reply_text(
@@ -442,66 +379,6 @@ async def cmd_logout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ 저장된 정보가 모두 삭제되었습니다.")
 
 
-# ── 스케줄 자동 실행 ──────────────────────────────────────────────────────
-
-async def _run_scheduled_vote(app: "Application") -> None:
-    logging.info("스케줄 자동 실행 시작")
-    if not storage.exists("etsid"):
-        await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 실패: /login 먼저 실행하세요.")
-        return
-
-    if _vote_lock.locked():
-        logging.info("스케줄 실행 건너뜀: 이미 vote 진행 중")
-        return
-
-    async with _vote_lock:
-        cfg = load_config()
-        loop = asyncio.get_running_loop()
-        try:
-            bot = Main(cfg)
-            session_ok = await loop.run_in_executor(None, bot.check_session, bot.target_board)
-            if not session_ok:
-                if storage.exists("userid") and storage.exists("password"):
-                    new_etsid = await get_etsid(storage.load("userid"), storage.load("password"), storage)
-                    if new_etsid:
-                        storage.save("etsid", new_etsid)
-                        bot = Main(cfg)
-                    else:
-                        await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 실패: 재로그인 실패. /login 을 실행하세요.")
-                        return
-                else:
-                    await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 실패: 세션 만료. /login 을 실행하세요.")
-                    return
-
-            skip_keywords = _get_skip_keywords()
-            result = await loop.run_in_executor(None, bot.start, None, skip_keywords)
-
-            KST = timezone(timedelta(hours=9))
-            now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
-            storage.save("last_run_time", now_kst)
-            now_str = datetime.now(KST).strftime("%H:%M")
-
-            if result["success"]:
-                voted = result["processed"]
-                skipped = result.get("skipped", 0)
-                if voted > 0 or skipped > 0:
-                    _append_run_stat(bot.target_board, voted, skipped, now_kst)
-                board_label = storage.load("board_name") or bot.target_board
-                if voted == 0:
-                    msg = f"⏰ 자동 실행 — 새 게시글 없음 ({now_str})\n📋 {board_label}"
-                else:
-                    msg = f"⏰ 자동 실행 완료 — +{voted}개 공감"
-                    if skipped:
-                        msg += f" / {skipped}개 건너뜀"
-                    msg += f" ({now_str})\n📋 {board_label}"
-                await app.bot.send_message(ALLOWED_CHAT_ID, msg)
-            else:
-                await app.bot.send_message(ALLOWED_CHAT_ID, "⏰ 자동 실행 오류가 발생했습니다.")
-        except Exception as e:
-            logging.error(f"스케줄 실행 오류: {e}")
-            await app.bot.send_message(ALLOWED_CHAT_ID, f"⏰ 자동 실행 오류: {e}")
-
-
 # ── /addskip /removeskip /listskip ────────────────────────────────────────
 
 async def cmd_addskip(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -511,12 +388,12 @@ async def cmd_addskip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("사용법: /addskip 키워드")
         return
     kw = " ".join(context.args).strip()
-    keywords = _get_skip_keywords()
+    keywords = get_skip_keywords()
     if kw in keywords:
         await update.message.reply_text(f"⚠️ 이미 등록된 키워드: {kw}")
         return
     keywords.append(kw)
-    _save_skip_keywords(keywords)
+    save_skip_keywords(keywords)
     await update.message.reply_text(f"✅ 추가됨: {kw}  (총 {len(keywords)}개)")
 
 
@@ -527,19 +404,19 @@ async def cmd_removeskip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("사용법: /removeskip 키워드")
         return
     kw = " ".join(context.args).strip()
-    keywords = _get_skip_keywords()
+    keywords = get_skip_keywords()
     if kw not in keywords:
         await update.message.reply_text(f"⚠️ 등록되지 않은 키워드: {kw}")
         return
     keywords.remove(kw)
-    _save_skip_keywords(keywords)
+    save_skip_keywords(keywords)
     await update.message.reply_text(f"✅ 삭제됨: {kw}  (남은 {len(keywords)}개)")
 
 
 async def cmd_listskip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _authorized(update):
         return
-    keywords = _get_skip_keywords()
+    keywords = get_skip_keywords()
     if not keywords:
         await update.message.reply_text("등록된 키워드가 없습니다.")
         return
@@ -547,127 +424,16 @@ async def cmd_listskip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🚫 건너뛸 키워드 ({len(keywords)}개):\n{lines}")
 
 
-# ── /stats ────────────────────────────────────────────────────────────────
-
-def _parse_ran_at_kst(ran_at: str):
-    """ran_at 문자열을 KST datetime으로 파싱. 실패 시 None."""
-    from datetime import datetime, timezone, timedelta
-    KST = timezone(timedelta(hours=9))
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"):
-        try:
-            dt = datetime.strptime(ran_at[:19], fmt[:len(ran_at[:19])])
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=KST)
-            return dt.astimezone(KST)
-        except ValueError:
-            continue
-    return None
-
+# ── /stats /togglestat ────────────────────────────────────────────────────
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _authorized(update):
         return
-    raw = storage.load("run_history")
-    if not raw:
+    history = load_run_history()
+    if not history:
         await update.message.reply_text("아직 실행 기록이 없습니다.")
         return
-    history = json.loads(raw)
-    valid = [h for h in history if h.get("is_valid", True)]
-
-    if not valid:
-        await update.message.reply_text("유효한 실행 기록이 없습니다.")
-        return
-
-    from datetime import datetime, timezone, timedelta
-    KST = timezone(timedelta(hours=9))
-    now_kst = datetime.now(KST)
-    today = now_kst.date()
-    week_start = today - timedelta(days=today.weekday())
-
-    # ── 기간별 집계 ──
-    today_records = [h for h in valid if (dt := _parse_ran_at_kst(h["ran_at"])) and dt.date() == today]
-    week_records  = [h for h in valid if (dt := _parse_ran_at_kst(h["ran_at"])) and dt.date() >= week_start]
-
-    def _sum(recs): return sum(h["voted"] for h in recs)
-    def _avg(recs): return _sum(recs) / len(recs) if recs else 0
-
-    total_voted   = _sum(valid)
-    total_skipped = sum(h["skipped"] for h in valid)
-    all_avg       = _avg(valid)
-
-    # ── 최고/최저 ──
-    best  = max(valid, key=lambda h: h["voted"])
-    worst = min(valid, key=lambda h: h["voted"])
-
-    def _short_date(h):
-        dt = _parse_ran_at_kst(h["ran_at"])
-        return dt.strftime("%m/%d %H:%M") if dt else h["ran_at"][:16]
-
-    # ── 최근 5 vs 이전 5 추세 ──
-    if len(valid) >= 10:
-        trend_str = ""
-        r5 = _avg(valid[-5:])
-        p5 = _avg(valid[-10:-5])
-        diff = r5 - p5
-        arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "─")
-        trend_str = f"{arrow} {abs(diff):.1f}  (최근5 평균 {r5:.1f}  /  이전5 평균 {p5:.1f})"
-    else:
-        trend_str = "데이터 부족 (10회 이상 필요)"
-
-    # ── 시간대별 패턴 ──
-    slots = {"심야(00~06)": [], "오전(06~12)": [], "오후(12~18)": [], "저녁(18~24)": []}
-    for h in valid:
-        dt = _parse_ran_at_kst(h["ran_at"])
-        if dt is None:
-            continue
-        hr = dt.hour
-        if hr < 6:
-            slots["심야(00~06)"].append(h["voted"])
-        elif hr < 12:
-            slots["오전(06~12)"].append(h["voted"])
-        elif hr < 18:
-            slots["오후(12~18)"].append(h["voted"])
-        else:
-            slots["저녁(18~24)"].append(h["voted"])
-
-    slot_avgs = {k: (sum(v) / len(v) if v else None) for k, v in slots.items()}
-    best_slot = max((k for k, v in slot_avgs.items() if v is not None), key=lambda k: slot_avgs[k], default=None)
-    time_lines = ""
-    for k, v in slot_avgs.items():
-        if v is None:
-            time_lines += f"  {k}: -\n"
-        else:
-            star = " ★" if k == best_slot else ""
-            count = len(slots[k])
-            time_lines += f"  {k}: 평균 {v:.1f}개 ({count}회){star}\n"
-
-    # ── 최근 기록 목록 (번호 포함) ──
-    recent_lines = ""
-    show = history[-10:]
-    for i, h in enumerate(show):
-        idx = len(history) - len(show) + i + 1
-        mark = "✗ " if not h.get("is_valid", True) else ""
-        dt_str = _parse_ran_at_kst(h["ran_at"])
-        dt_str = dt_str.strftime("%m/%d %H:%M") if dt_str else h["ran_at"][:16]
-        board = h.get("board_name") or h.get("board_id", "")
-        recent_lines += f"  {idx}. {mark}{dt_str}  {h['voted']}개  ({board})\n"
-
-    sample_warn = "\n⚠️ 표본 부족 (참고용)" if len(valid) < 50 else ""
-
-    msg = (
-        f"📊 공감 통계{sample_warn}\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"오늘: {_sum(today_records)}개 ({len(today_records)}회) | "
-        f"이번주: {_sum(week_records)}개 ({len(week_records)}회)\n"
-        f"전체: {total_voted}개 ({len(valid)}회) | 평균: {all_avg:.1f}개/회\n"
-        f"건너뜀: {total_skipped}개\n"
-        f"\n📈 추세\n  {trend_str}\n"
-        f"\n🏆 최고: {best['voted']}개 ({_short_date(best)})  "
-        f"최저: {worst['voted']}개 ({_short_date(worst)})\n"
-        f"\n🕐 시간대별 패턴\n{time_lines}"
-        f"\n📋 최근 기록 (번호로 /togglestat 사용)\n{recent_lines}"
-    )
-    await update.message.reply_text(msg)
+    await update.message.reply_text(format_stats_message(history))
 
 
 async def cmd_togglestat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -682,22 +448,52 @@ async def cmd_togglestat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ 숫자를 입력해주세요.")
         return
 
-    raw = storage.load("run_history")
-    if not raw:
+    history = load_run_history()
+    if not history:
         await update.message.reply_text("실행 기록이 없습니다.")
         return
-    history = json.loads(raw)
     if not (0 <= idx < len(history)):
         await update.message.reply_text(f"❌ 유효한 번호 범위: 1~{len(history)}")
         return
 
     history[idx]["is_valid"] = not history[idx].get("is_valid", True)
-    storage.save("run_history", json.dumps(history))
+    save_run_history(history)
     state = "유효" if history[idx]["is_valid"] else "제외"
     await update.message.reply_text(f"✅ #{idx + 1} 레코드를 [{state}]로 변경했습니다.")
 
 
-# ── /setschedule /cancelschedule ──────────────────────────────────────────
+async def cmd_deletestat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    if not context.args:
+        await update.message.reply_text("사용법: /deletestat <번호>  (예: /deletestat 3)")
+        return
+    try:
+        idx = int(context.args[0]) - 1
+    except ValueError:
+        await update.message.reply_text("❌ 숫자를 입력해주세요.")
+        return
+
+    history = load_run_history()
+    if not history:
+        await update.message.reply_text("실행 기록이 없습니다.")
+        return
+    if not (0 <= idx < len(history)):
+        await update.message.reply_text(f"❌ 유효한 번호 범위: 1~{len(history)}")
+        return
+
+    record = history[idx]
+    if delete_run_stat(idx):
+        board = record.get("board_name") or record.get("board_id", "")
+        await update.message.reply_text(
+            f"🗑 #{idx + 1} 레코드 삭제됨\n"
+            f"  {record['ran_at'][:16]}  {record['voted']}개  ({board})"
+        )
+    else:
+        await update.message.reply_text("❌ 삭제 실패.")
+
+
+# ── /setschedule /listschedule /cancelschedule ────────────────────────────
 
 async def cmd_setschedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _authorized(update):
@@ -713,8 +509,32 @@ async def cmd_setschedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ 형식이 잘못되었습니다. 예: /setschedule 08:00")
         return
     storage.save("schedule_time", f"{hour:02d}:{minute:02d}")
-    _update_scheduler(context.application, hour, minute)
+    update_scheduler(context.application, hour, minute)
     await update.message.reply_text(f"✅ 매일 {hour:02d}:{minute:02d} (KST)에 자동 실행됩니다.")
+
+
+async def cmd_listschedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    schedule_time = storage.load("schedule_time")
+    if not schedule_time:
+        await update.message.reply_text(
+            "⏰ 예약된 자동 실행이 없습니다.\n/setschedule HH:MM 으로 예약하세요."
+        )
+        return
+    job = _scheduler.get_job("auto_vote")
+    if job and job.next_run_time:
+        next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M KST")
+    else:
+        next_run = "알 수 없음"
+    board_label = storage.load("board_name") or storage.load("board_id") or "미설정"
+    await update.message.reply_text(
+        f"⏰ 자동 실행 스케줄\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"🕐 실행 시간: 매일 {schedule_time} (KST)\n"
+        f"▶ 다음 실행: {next_run}\n"
+        f"📋 대상 게시판: {board_label}"
+    )
 
 
 async def cmd_cancelschedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -732,7 +552,7 @@ async def _post_init(app: Application) -> None:
     if schedule_time:
         try:
             hour, minute = map(int, schedule_time.split(":"))
-            _update_scheduler(app, hour, minute)
+            update_scheduler(app, hour, minute)
             logging.info(f"스케줄 복원: 매일 {hour:02d}:{minute:02d} KST")
         except Exception as e:
             logging.error(f"스케줄 복원 실패: {e}")
@@ -777,12 +597,14 @@ def main():
     app.add_handler(CallbackQueryHandler(setboard_callback, pattern="^(sb:|bp:)"))
     app.add_handler(CommandHandler("vote", cmd_vote))
     app.add_handler(CommandHandler("setschedule", cmd_setschedule))
+    app.add_handler(CommandHandler("listschedule", cmd_listschedule))
     app.add_handler(CommandHandler("cancelschedule", cmd_cancelschedule))
     app.add_handler(CommandHandler("addskip", cmd_addskip))
     app.add_handler(CommandHandler("removeskip", cmd_removeskip))
     app.add_handler(CommandHandler("listskip", cmd_listskip))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("togglestat", cmd_togglestat))
+    app.add_handler(CommandHandler("deletestat", cmd_deletestat))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("logout", cmd_logout))
 
