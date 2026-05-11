@@ -8,7 +8,6 @@ from telegram.ext import ContextTypes
 from ..auth import get_etsid
 from ..voter import Main, load_config
 from ..repository import storage, get_skip_keywords, append_run_stat
-from ..formatter import _fmt_created_at
 from .utils import _authorized, _safe_edit
 
 _vote_lock = asyncio.Lock()
@@ -61,19 +60,17 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text("❌ 세션이 유효하지 않습니다. /login 을 실행하세요.")
                     return
 
-            checkpoint = bot.read_checkpoint()
-            init_lines = ["⏳ 공감 진행 중...", "━━━━░░░░░░░░░░░░ 0개", "📄 1페이지 탐색 중"]
-            if checkpoint.get("post_created_at"):
-                init_lines.append(f"🔖 {_fmt_created_at(checkpoint['post_created_at'])} 이후 게시글만 탐색")
-            msg = await update.effective_chat.send_message("\n".join(init_lines))
+            msg = await update.effective_chat.send_message(
+                "⏳ 공감 진행 중...\n━━━━░░░░░░░░░░░░ 0개\n📄 1페이지 탐색 중"
+            )
 
             def _progress(n: int, page: int) -> None:
                 if n % 5 != 0:
                     return
-                lines = ["⏳ 공감 진행 중...", f"━━━━░░░░░░░░░░░░ {n}개", f"📄 {page}페이지 탐색 중"]
-                if checkpoint.get("post_created_at"):
-                    lines.append(f"🔖 {_fmt_created_at(checkpoint['post_created_at'])} 이후 게시글만 탐색")
-                fut = asyncio.run_coroutine_threadsafe(_safe_edit(msg, "\n".join(lines)), loop)
+                fut = asyncio.run_coroutine_threadsafe(
+                    _safe_edit(msg, f"⏳ 공감 진행 중...\n━━━━░░░░░░░░░░░░ {n}개\n📄 {page}페이지 탐색 중"),
+                    loop,
+                )
                 try:
                     fut.result(timeout=10)
                 except Exception:
@@ -90,28 +87,21 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 processed = result["processed"]
                 skipped = result.get("skipped", 0)
                 page = result.get("final_page", 1)
-                last_created_at = result.get("last_created_at", "")
-                last_title = result.get("last_title", "")
                 now_str = datetime.now(KST).strftime("%H:%M")
-                fmt_ca = _fmt_created_at(last_created_at) if last_created_at else "?"
                 if processed > 0 or skipped > 0:
-                    append_run_stat(bot.target_board, processed, skipped, now_kst, result.get("is_full_scan"))
+                    append_run_stat(bot.target_board, processed, skipped, now_kst, None)
                 skip_line = f"\n🚫 건너뜀 {skipped}개" if skipped else ""
                 if processed == 0:
                     await _safe_edit(msg, (
-                        f"✅ 이미 최신 상태입니다\n"
+                        f"✅ 공감할 글 없음 (모두 공감 1개 이상)\n"
                         f"━━━━━━━━━━━━━━━━\n"
-                        f"📌 {fmt_ca} 이후 새 게시글 없음\n"
-                        f"   └ {last_title}\n"
                         f"🕐 {now_str}{skip_line}"
                     ))
                 else:
                     await _safe_edit(msg, (
-                        f"✅ 공감 완료  |  🆕 신규 +{processed}개\n"
+                        f"✅ 공감 완료  |  +{processed}개\n"
                         f"━━━━━━━━━━━━━━━━ {processed}개\n"
-                        f"📄 {page}페이지  |  🕐 {now_str}\n"
-                        f"📌 {fmt_ca} 게시글까지\n"
-                        f"   └ {last_title}{skip_line}"
+                        f"📄 {page}페이지  |  🕐 {now_str}{skip_line}"
                     ))
             else:
                 await _safe_edit(msg, "❌ 공감 도중 오류가 발생했습니다.")

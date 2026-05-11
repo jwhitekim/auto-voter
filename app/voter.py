@@ -1,7 +1,6 @@
 import time
 import random
 import logging
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
@@ -113,7 +112,12 @@ class EverytimeBot:
         try:
             root = ElementTree.fromstring(res_text)
             return [
-                {"id": a.get('id'), "title": a.get('title', ''), "created_at": a.get('created_at', '')}
+                {
+                    "id": a.get('id'),
+                    "title": a.get('title', ''),
+                    "created_at": a.get('created_at', ''),
+                    "posvote": int(a.get('posvote', '0') or '0'),
+                }
                 for a in root.findall('.//article')
             ]
         except Exception as e:
@@ -178,83 +182,15 @@ class Main(EverytimeBot):
         self.target_board = saved_board if saved_board else cfg["bot"]["board_id"]
         self.id_title_map: dict[str, str] = {}
 
-    def _now(self) -> str:
-        return datetime.now(timezone.utc).isoformat()
-
-    def _now_kst(self) -> str:
-        return datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M:%S")
-
-    def save_checkpoint(self, post_id: str, post_title: str = "", post_created_at: str = "", voted_at: str = "") -> None:
-        now = self._now()
-        entries = [
-            ("last_article_id",         str(post_id)),
-            ("last_article_title",      post_title),
-            ("last_article_created_at", post_created_at),
-            ("last_voted_at",           voted_at or self._now_kst()),
-            ("last_board_id",           self.target_board),
-        ]
-        try:
-            for key, value in entries:
-                self.supabase.table("bot_state").upsert(
-                    {"key": key, "value": value, "updated_at": now}
-                ).execute()
-        except Exception as e:
-            logging.error(f"save_checkpoint 실패: {e}")
-
-    def read_checkpoint(self) -> dict:
-        empty = {"post_id": None, "post_title": "", "post_created_at": "", "voted_at": ""}
-        keys = ["last_article_id", "last_article_title", "last_article_created_at", "last_voted_at", "last_board_id"]
-        key_map = {
-            "last_article_id":         "post_id",
-            "last_article_title":      "post_title",
-            "last_article_created_at": "post_created_at",
-            "last_voted_at":           "voted_at",
-        }
-        try:
-            res = (
-                self.supabase.table("bot_state")
-                .select("key,value")
-                .in_("key", keys)
-                .execute()
-            )
-            rows = {row["key"]: row["value"] for row in (res.data or [])}
-            if rows.get("last_board_id") != self.target_board:
-                logging.info(f"게시판 변경 감지 ({rows.get('last_board_id')} → {self.target_board}), 체크포인트 초기화")
-                return empty
-            out = empty.copy()
-            for key, field in key_map.items():
-                if key in rows:
-                    out[field] = rows[key]
-            return out
-        except Exception as e:
-            logging.error(f"read_checkpoint 실패: {e}")
-        return empty
-
     def start(self, progress_callback=None, skip_keywords: list[str] | None = None) -> dict:
         max_pages = self.cfg["bot"]["max_pages"]
         processed = 0
         skipped = 0
-        new_latest_id = None
-        new_latest_title = None
-        new_latest_created_at = None
         final_page = 0
 
         if not self.check_session(self.target_board):
             logging.error("세션이 유효하지 않아 종료합니다.")
-            return {"processed": 0, "skipped": 0, "last_id": None, "last_title": None, "last_created_at": None, "final_page": 0, "success": False}
-
-        checkpoint = self.read_checkpoint()
-        last_id = checkpoint["post_id"]
-        last_created_at = checkpoint["post_created_at"]
-        logging.info(f"마지막 작업 게시글 ID: {last_id}, created_at: {last_created_at}")
-
-        def _ts(s):
-            try:
-                return int(s)
-            except (ValueError, TypeError):
-                return 0
-
-        last_ts = _ts(last_created_at)
+            return {"processed": 0, "skipped": 0, "final_page": 0, "success": False}
 
         for i in range(max_pages):
             start_index = i * 20
@@ -265,51 +201,17 @@ class Main(EverytimeBot):
             if not articles:
                 break
 
-            if i == 0:
-                new_latest_id = articles[0]['id']
-                new_latest_title = articles[0]['title']
-                new_latest_created_at = articles[0].get('created_at', '')
-
             for item in articles:
                 self.id_title_map[item['id']] = item['title']
-
-                if str(item['id']) == str(last_id):
-                    logging.info("이전 작업 지점에 도달했습니다. 종료합니다.")
-                    if new_latest_id:
-                        self.save_checkpoint(new_latest_id, new_latest_title or "", new_latest_created_at or "")
-                    return {
-                        "processed": processed,
-                        "skipped": skipped,
-                        "last_id": new_latest_id,
-                        "last_title": new_latest_title,
-                        "last_created_at": new_latest_created_at,
-                        "final_page": final_page,
-                        "success": True,
-                        "is_full_scan": last_id is None,
-                    }
-
-                # 체크포인트 게시글이 삭제된 경우: 저장된 타임스탬프보다 오래된 글에 도달하면 중단
-                if last_ts and _ts(item.get('created_at', '')) <= last_ts:
-                    logging.warning(
-                        f"체크포인트({last_id})를 찾지 못했으나 타임스탬프 기준 도달. "
-                        f"삭제된 게시글로 판단하고 중단합니다. (처리: {processed}개)"
-                    )
-                    if new_latest_id:
-                        self.save_checkpoint(new_latest_id, new_latest_title or "", new_latest_created_at or "")
-                    return {
-                        "processed": processed,
-                        "skipped": skipped,
-                        "last_id": new_latest_id,
-                        "last_title": new_latest_title,
-                        "last_created_at": new_latest_created_at,
-                        "final_page": final_page,
-                        "success": True,
-                        "is_full_scan": last_id is None,
-                    }
 
                 title = (item.get('title') or '').lower()
                 if skip_keywords and any(kw.lower() in title for kw in skip_keywords):
                     logging.info(f"[{item['id']}] 건너뜀 (키워드 일치): {item.get('title')}")
+                    skipped += 1
+                    continue
+
+                if item.get('posvote', 0) >= 1:
+                    logging.info(f"[{item['id']}] 건너뜀 (공감 {item['posvote']}개): {item.get('title')}")
                     skipped += 1
                     continue
 
@@ -322,16 +224,9 @@ class Main(EverytimeBot):
                     self.cfg["timing"]["sleep_max"],
                 ))
 
-        if new_latest_id:
-            self.save_checkpoint(new_latest_id, new_latest_title or "", new_latest_created_at or "")
-
         return {
             "processed": processed,
             "skipped": skipped,
-            "last_id": new_latest_id,
-            "last_title": new_latest_title,
-            "last_created_at": new_latest_created_at,
             "final_page": final_page,
             "success": True,
-            "is_full_scan": last_id is None,
         }

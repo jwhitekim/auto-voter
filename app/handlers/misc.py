@@ -57,13 +57,6 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    last_title = None
-    try:
-        cp = Main(load_config()).read_checkpoint()
-        last_title = cp.get("post_title") or cp.get("post_id") or None
-    except Exception:
-        pass
-
     cfg = load_config()
     current_board = (
         board_name_cached
@@ -75,8 +68,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔐 로그인: {'✅ 저장됨' if etsid_saved else '❌ 없음'}\n"
         f"📡 세션: {'✅ 유효' if session_valid else '❌ 만료/없음'}\n"
         f"📋 게시판: {current_board}\n"
-        f"🕐 마지막 실행: {storage.load('last_run_time') or '없음'}\n"
-        f"📌 마지막 처리 글: {last_title or '없음'}"
+        f"🕐 마지막 실행: {storage.load('last_run_time') or '없음'}"
     )
 
 
