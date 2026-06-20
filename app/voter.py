@@ -183,7 +183,6 @@ class Main(EverytimeBot):
         self.id_title_map: dict[str, str] = {}
 
     def start(self, progress_callback=None, skip_keywords: list[str] | None = None) -> dict:
-        max_pages = self.cfg["bot"]["max_pages"]
         processed = 0
         skipped = 0
         final_page = 0
@@ -192,37 +191,71 @@ class Main(EverytimeBot):
             logging.error("세션이 유효하지 않아 종료합니다.")
             return {"processed": 0, "skipped": 0, "final_page": 0, "success": False}
 
-        for i in range(max_pages):
-            start_index = i * 20
-            final_page = i + 1
-            logging.info(f"현재 {i+1}페이지(시작 인덱스: {start_index}) 분석 중...")
+        checkpoint_id = self.storage.load("last_article_id")
+        is_initial = checkpoint_id is None
+        articles_to_vote = []
+        first_article_id = None  # 이번 실행의 최신 게시글 (새 체크포인트)
 
-            articles = self.get_article_ids(self.target_board, start_num=start_index)
-            if not articles:
-                break
+        if is_initial:
+            max_pages = self.cfg["bot"]["max_pages"]
+            for i in range(max_pages):
+                final_page = i + 1
+                logging.info(f"[초기] {final_page}페이지 스캔 중...")
+                page_articles = self.get_article_ids(self.target_board, start_num=i * 20)
+                if not page_articles:
+                    break
+                if first_article_id is None:
+                    first_article_id = page_articles[0]['id']
+                articles_to_vote.extend(page_articles)
+                time.sleep(self.cfg["timing"]["page_delay"])
+        else:
+            offset = 0
+            found = False
+            while not found:
+                final_page += 1
+                logging.info(f"[재개] {final_page}페이지 탐색 중 (체크포인트: {checkpoint_id})...")
+                page_articles = self.get_article_ids(self.target_board, start_num=offset)
+                if not page_articles:
+                    break
+                if first_article_id is None:
+                    first_article_id = page_articles[0]['id']
+                for article in page_articles:
+                    if article['id'] == checkpoint_id:
+                        found = True
+                        break
+                    articles_to_vote.append(article)
+                if not found:
+                    offset += 20
+                    time.sleep(self.cfg["timing"]["page_delay"])
+            if not found:
+                logging.warning("체크포인트 게시글을 찾지 못했습니다. 수집된 전체 결과를 사용합니다.")
 
-            for item in articles:
-                self.id_title_map[item['id']] = item['title']
+        # 이번 실행의 최신 게시글을 다음 실행의 체크포인트로 저장
+        if first_article_id:
+            self.storage.save("last_article_id", first_article_id)
 
-                title = (item.get('title') or '').lower()
-                if skip_keywords and any(kw.lower() in title for kw in skip_keywords):
-                    logging.info(f"[{item['id']}] 건너뜀 (키워드 일치): {item.get('title')}")
-                    skipped += 1
-                    continue
+        for item in articles_to_vote:
+            self.id_title_map[item['id']] = item['title']
 
-                if item.get('posvote', 0) >= 1:
-                    logging.info(f"[{item['id']}] 건너뜀 (공감 {item['posvote']}개): {item.get('title')}")
-                    skipped += 1
-                    continue
+            title = (item.get('title') or '').lower()
+            if skip_keywords and any(kw.lower() in title for kw in skip_keywords):
+                logging.info(f"[{item['id']}] 건너뜀 (키워드 일치): {item.get('title')}")
+                skipped += 1
+                continue
 
-                self.push_vote(article_id=item['id'])
-                processed += 1
-                if progress_callback:
-                    progress_callback(processed, final_page)
-                time.sleep(random.uniform(
-                    self.cfg["timing"]["sleep_min"],
-                    self.cfg["timing"]["sleep_max"],
-                ))
+            if item.get('posvote', 0) >= 1:
+                logging.info(f"[{item['id']}] 건너뜀 (공감 {item['posvote']}개): {item.get('title')}")
+                skipped += 1
+                continue
+
+            self.push_vote(article_id=item['id'])
+            processed += 1
+            if progress_callback:
+                progress_callback(processed, final_page)
+            time.sleep(random.uniform(
+                self.cfg["timing"]["sleep_min"],
+                self.cfg["timing"]["sleep_max"],
+            ))
 
         return {
             "processed": processed,
