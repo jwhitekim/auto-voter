@@ -11,7 +11,7 @@ class VoteRunner:
 
         session_value = self.storage.load("etsid")
         if not session_value:
-            raise ValueError("etsid가 저장되어 있지 않습니다. /login 을 먼저 실행하세요.")
+            raise ValueError("etsid가 저장되어 있지 않습니다. /setsession 을 먼저 실행하세요.")
 
         self.client = EverytimeClient(session_value)
         saved_board = self.storage.load("board_id")

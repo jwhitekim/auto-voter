@@ -15,7 +15,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "📋 사용 가능한 명령어:\n"
-        "/login — 아이디/비번으로 자동 로그인\n"
         "/setsession — etsid 수동 입력\n"
         "/setboard — 공감할 게시판 선택\n"
         "/vote — 공감 봇 실행\n"
@@ -25,8 +24,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/stats — 공감 통계\n"
         "/togglestat <번호> — 레코드 유효/제외 토글\n"
         "/deletestat <번호> — 레코드 영구 삭제\n"
-        "/status — 현재 상태 확인\n"
-        "/logout — 저장된 정보 삭제"
+        "/status — 현재 상태 확인"
     )
 
 
@@ -66,16 +64,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(
-        f"🔐 로그인: {'✅ 저장됨' if etsid_saved else '❌ 없음'}\n"
+        f"🔐 세션: {'✅ 저장됨' if etsid_saved else '❌ 없음'}\n"
         f"📡 세션: {'✅ 유효' if session_valid else '❌ 만료/없음'}\n"
         f"📋 게시판: {current_board}\n"
         f"🕐 마지막 실행: {storage.load('last_run_time') or '없음'}"
     )
-
-
-async def cmd_logout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not _authorized(update):
-        return
-    for key in ("userid", "password", "etsid"):
-        storage.delete(key)
-    await update.message.reply_text("✅ 저장된 정보가 모두 삭제되었습니다.")

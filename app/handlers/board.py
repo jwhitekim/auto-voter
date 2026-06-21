@@ -31,7 +31,7 @@ async def cmd_setboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _authorized(update):
         return
     if not storage.exists("etsid"):
-        await update.message.reply_text("⚠️ /login 먼저 실행하세요.")
+        await update.message.reply_text("⚠️ /setsession 으로 etsid를 먼저 저장하세요.")
         return
 
     msg = await update.message.reply_text("🔄 게시판 목록 불러오는 중...")

@@ -15,9 +15,8 @@ from telegram.ext import (
 )
 
 from .handlers.auth import (
-    ASK_USER, ASK_PASS, ASK_SESSION,
-    login_start, login_got_user, login_got_pass, login_cancel,
-    setsession_start, setsession_got,
+    ASK_SESSION,
+    setsession_start, setsession_got, session_cancel,
 )
 from .handlers.board import cmd_setboard, setboard_callback
 from .handlers.vote import cmd_vote
@@ -31,7 +30,7 @@ from .handlers.stats import (
     cmd_stats, cmd_togglestat, cmd_deletestat,
     togglestat_received, deletestat_received, stat_cancel,
 )
-from .handlers.misc import cmd_start, cmd_status, cmd_logout
+from .handlers.misc import cmd_start, cmd_status
 
 load_dotenv()
 
@@ -69,21 +68,12 @@ def main():
         .build()
     )
 
-    login_conv = ConversationHandler(
-        entry_points=[CommandHandler("login", login_start)],
-        states={
-            ASK_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_got_user)],
-            ASK_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_got_pass)],
-        },
-        fallbacks=[CommandHandler("cancel", login_cancel)],
-    )
-
     session_conv = ConversationHandler(
         entry_points=[CommandHandler("setsession", setsession_start)],
         states={
             ASK_SESSION: [MessageHandler(filters.TEXT & ~filters.COMMAND, setsession_got)],
         },
-        fallbacks=[CommandHandler("cancel", login_cancel)],
+        fallbacks=[CommandHandler("cancel", session_cancel)],
     )
 
     addskip_conv = ConversationHandler(
@@ -119,7 +109,6 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(login_conv)
     app.add_handler(session_conv)
     app.add_handler(CommandHandler("setboard", cmd_setboard))
     app.add_handler(CallbackQueryHandler(setboard_callback, pattern="^(sb:|bp:)"))
@@ -131,7 +120,6 @@ def main():
     app.add_handler(togglestat_conv)
     app.add_handler(deletestat_conv)
     app.add_handler(CommandHandler("status", cmd_status))
-    app.add_handler(CommandHandler("logout", cmd_logout))
     app.add_error_handler(_error_handler)
 
     app.run_polling()
