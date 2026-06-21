@@ -6,10 +6,10 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from ..domain.vote_runner import VoteRunner
-from ..repository import storage, get_skip_keywords, append_run_stat
+from ..storage import storage, get_skip_keywords, append_run_stat
 from ..settings import load_config
 from ..telegram.messages import format_vote_result
-from .utils import _authorized, _safe_edit
+from .shared import _authorized, _safe_edit
 
 _vote_lock = asyncio.Lock()
 

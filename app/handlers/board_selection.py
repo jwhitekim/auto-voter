@@ -4,9 +4,9 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from ..domain.vote_runner import VoteRunner
-from ..repository import storage
+from ..storage import storage
 from ..settings import load_config
-from .utils import _authorized
+from .shared import _authorized
 
 
 def _build_board_keyboard(boards: list[dict], page: int) -> InlineKeyboardMarkup:

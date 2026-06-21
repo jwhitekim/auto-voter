@@ -5,9 +5,9 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from ..domain.vote_runner import VoteRunner
-from ..repository import storage
+from ..storage import storage
 from ..settings import load_config
-from .utils import _authorized
+from .shared import _authorized
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -1,12 +1,12 @@
 from ..clients.everytime import EverytimeClient
-from ..storage import SecureStorage
+from ..storage import storage
 from .voting import run_vote
 
 
 class VoteRunner:
     def __init__(self, cfg):
         self.cfg = cfg
-        self.storage = SecureStorage()
+        self.storage = storage
         self.supabase = self.storage.supabase
 
         session_value = self.storage.load("etsid")

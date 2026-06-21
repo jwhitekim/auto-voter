@@ -1,8 +1,8 @@
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 
-from ..repository import get_skip_keywords, save_skip_keywords
-from .utils import _authorized
+from ..storage import get_skip_keywords, save_skip_keywords
+from .shared import _authorized
 
 ASK_SKIP_ADD, ASK_SKIP_REMOVE = range(2)
 
