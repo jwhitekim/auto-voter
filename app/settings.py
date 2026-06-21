@@ -18,7 +18,7 @@ DEFAULTS = {
     },
 }
 
-_ROOT = Path(__file__).parent.parent
+_ROOT = Path(__file__).parent
 
 
 def _deep_merge(base, override):
