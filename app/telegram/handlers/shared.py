@@ -4,7 +4,7 @@ import os
 
 from telegram import Update
 
-from ..settings import load_env
+from ...settings import load_env
 
 load_env()
 

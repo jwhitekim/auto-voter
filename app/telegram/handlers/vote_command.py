@@ -5,10 +5,10 @@ from datetime import datetime, timezone, timedelta
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from ..domain.vote_runner import VoteRunner
-from ..storage import storage, get_skip_keywords, append_run_stat
-from ..settings import load_config
-from ..telegram.messages import format_vote_result
+from ...domain.vote_runner import VoteRunner
+from ...storage import storage, get_skip_keywords, append_run_stat
+from ...settings import load_config
+from ..messages import format_vote_result
 from .shared import _authorized, _safe_edit
 
 _vote_lock = asyncio.Lock()

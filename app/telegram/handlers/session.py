@@ -1,7 +1,7 @@
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 
-from ..storage import storage
+from ...storage import storage
 from .shared import _authorized
 
 ASK_SESSION = 0

@@ -3,9 +3,9 @@ import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from ..domain.vote_runner import VoteRunner
-from ..storage import storage
-from ..settings import load_config
+from ...domain.vote_runner import VoteRunner
+from ...storage import storage
+from ...settings import load_config
 from .shared import _authorized
 
 

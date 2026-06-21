@@ -3,7 +3,7 @@ from datetime import datetime, timezone, timedelta
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 
-from ..storage import load_run_history, save_run_history, delete_run_stat
+from ...storage import load_run_history, save_run_history, delete_run_stat
 from .shared import _authorized
 
 ASK_TOGGLE_IDX, ASK_DELETE_IDX = range(2)

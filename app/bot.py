@@ -13,23 +13,23 @@ from telegram.ext import (
     filters,
 )
 
-from .handlers.session import (
+from .telegram.handlers.session import (
     ASK_SESSION,
     setsession_start, setsession_got, session_cancel,
 )
-from .handlers.board_selection import cmd_setboard, setboard_callback
-from .handlers.vote_command import cmd_vote
-from .handlers.skip_keywords import (
+from .telegram.handlers.board_selection import cmd_setboard, setboard_callback
+from .telegram.handlers.vote_command import cmd_vote
+from .telegram.handlers.skip_keywords import (
     ASK_SKIP_ADD, ASK_SKIP_REMOVE,
     cmd_addskip, cmd_removeskip, cmd_listskip,
     addskip_received, removeskip_received, skip_cancel,
 )
-from .handlers.run_stats import (
+from .telegram.handlers.run_stats import (
     ASK_TOGGLE_IDX, ASK_DELETE_IDX,
     cmd_stats, cmd_togglestat, cmd_deletestat,
     togglestat_received, deletestat_received, stat_cancel,
 )
-from .handlers.basic import cmd_start, cmd_status
+from .telegram.handlers.basic import cmd_start, cmd_status
 from .settings import load_env
 
 load_env()
