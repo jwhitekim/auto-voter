@@ -2,7 +2,30 @@ import json
 
 from .storage import SecureStorage
 
-storage = SecureStorage()
+
+class LazyStorage:
+    def __init__(self):
+        self._storage = None
+
+    def _get(self) -> SecureStorage:
+        if self._storage is None:
+            self._storage = SecureStorage()
+        return self._storage
+
+    def save(self, key: str, value: str) -> None:
+        self._get().save(key, value)
+
+    def load(self, key: str) -> str | None:
+        return self._get().load(key)
+
+    def delete(self, key: str) -> None:
+        self._get().delete(key)
+
+    def exists(self, key: str) -> bool:
+        return self._get().exists(key)
+
+
+storage = LazyStorage()
 
 
 def get_skip_keywords() -> list[str]:

@@ -35,8 +35,6 @@ from .handlers.misc import cmd_start, cmd_status, cmd_logout
 
 load_dotenv()
 
-TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -60,9 +58,13 @@ async def _error_handler(update, context) -> None:
 
 
 def main():
+    telegram_token = os.environ.get("TELEGRAM_TOKEN", "").strip()
+    if not telegram_token:
+        raise RuntimeError("TELEGRAM_TOKEN 환경변수가 설정되지 않았습니다.")
+
     app = (
         Application.builder()
-        .token(TELEGRAM_TOKEN)
+        .token(telegram_token)
         .concurrent_updates(True)
         .build()
     )

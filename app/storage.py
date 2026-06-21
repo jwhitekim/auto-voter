@@ -1,5 +1,4 @@
 import os
-import sys
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,8 +18,7 @@ class SecureStorage:
         url = os.environ.get("SUPABASE_URL", "").strip()
         key_sb = os.environ.get("SUPABASE_KEY", "").strip()
         if not url or not key_sb:
-            print("[ERROR] SUPABASE_URL 또는 SUPABASE_KEY 환경변수가 설정되지 않았습니다.")
-            sys.exit(1)
+            raise RuntimeError("SUPABASE_URL 또는 SUPABASE_KEY 환경변수가 설정되지 않았습니다.")
 
         self.supabase = create_client(url, key_sb)
 
