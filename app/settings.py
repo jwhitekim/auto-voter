@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import yaml
+from dotenv import load_dotenv
 
 DEFAULTS = {
     "bot": {
@@ -19,6 +20,11 @@ DEFAULTS = {
 }
 
 _ROOT = Path(__file__).parent
+ENV_FILE = _ROOT / ".env"
+
+
+def load_env() -> None:
+    load_dotenv(ENV_FILE)
 
 
 def _deep_merge(base, override):

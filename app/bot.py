@@ -3,7 +3,6 @@ import logging
 import os
 import sys
 
-from dotenv import load_dotenv
 from telegram.error import Conflict
 from telegram.ext import (
     Application,
@@ -31,8 +30,9 @@ from .handlers.stats import (
     togglestat_received, deletestat_received, stat_cancel,
 )
 from .handlers.misc import cmd_start, cmd_status
+from .settings import load_env
 
-load_dotenv()
+load_env()
 
 logging.basicConfig(
     level=logging.INFO,

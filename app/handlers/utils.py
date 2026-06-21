@@ -2,10 +2,11 @@ import asyncio
 import logging
 import os
 
-from dotenv import load_dotenv
 from telegram import Update
 
-load_dotenv()
+from ..settings import load_env
+
+load_env()
 
 
 def _allowed_chat_id() -> int | None:

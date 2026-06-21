@@ -1,19 +1,19 @@
 import os
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 
 from cryptography.fernet import Fernet
-from dotenv import load_dotenv, set_key
+from dotenv import set_key
 from supabase import create_client
 
-_ROOT = Path(__file__).parent.parent
-_ENV_FILE = str(_ROOT / ".env")
+from .settings import ENV_FILE, load_env
+
+_ENV_FILE = str(ENV_FILE)
 
 
 class SecureStorage:
     def __init__(self):
-        load_dotenv()
+        load_env()
 
         url = os.environ.get("SUPABASE_URL", "").strip()
         key_sb = os.environ.get("SUPABASE_KEY", "").strip()
