@@ -6,8 +6,10 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from ..auth import get_etsid
-from ..voter import Main, load_config
+from ..config import load_config
+from ..domain.vote_runner import VoteRunner
 from ..repository import storage, get_skip_keywords, append_run_stat
+from ..telegram.messages import format_vote_result
 from .utils import _authorized, _safe_edit
 
 _vote_lock = asyncio.Lock()
@@ -29,7 +31,7 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for attempt in range(2):
             try:
-                bot = Main(cfg)
+                bot = VoteRunner(cfg)
             except ValueError:
                 await update.message.reply_text("⚠️ /login 먼저 실행하세요.")
                 return
@@ -98,56 +100,10 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 skipped = result.get("skipped", 0)
                 already = result.get("already", 0)
                 failed = result.get("failed", 0)
-                candidates = result.get("candidates", 0)
-                scanned = result.get("scanned", 0)
-                page = result.get("final_page", 1)
-                checkpoint_found = result.get("checkpoint_found", False)
-                scan_limit_reached = result.get("scan_limit_reached", False)
-                is_initial = result.get("is_initial", False)
                 now_str = datetime.now(KST).strftime("%H:%M")
                 if processed > 0 or skipped > 0 or already > 0 or failed > 0:
                     append_run_stat(bot.target_board, processed, skipped, now_kst, None)
-
-                if is_initial:
-                    scan_line = f"🔎 초기 스캔: {page}페이지, 게시글 {scanned}개"
-                elif checkpoint_found:
-                    scan_line = f"🔎 이전 기준 게시글 찾음: {page}페이지, 게시글 {scanned}개 확인"
-                elif scan_limit_reached:
-                    max_posts = page * 20
-                    scan_line = f"⚠️ 이전 기준 게시글 못 찾음: 최대 {page}페이지/{max_posts}개 범위만 처리"
-                else:
-                    scan_line = f"⚠️ 이전 기준 게시글 못 찾음: {page}페이지/{scanned}개 확인"
-
-                result_lines = [
-                    f"✅ 공감 완료: +{processed}개",
-                    f"📌 후보: {candidates}개",
-                    f"🚫 건너뜀: {skipped}개",
-                ]
-                if already:
-                    result_lines.append(f"↩️ 이미 공감: {already}개")
-                if failed:
-                    result_lines.append(f"❌ 실패: {failed}개")
-
-                status = "⚠️ 일부 실패" if failed else "✅ 완료"
-                if processed == 0 and candidates == 0:
-                    status = "✅ 새 공감 후보 없음"
-                elif processed == 0 and skipped > 0 and failed == 0:
-                    status = "✅ 공감할 글 없음"
-
-                checkpoint_line = (
-                    "체크포인트: 실패가 있어 유지됨"
-                    if failed else
-                    "체크포인트: 이번 최신 글로 갱신됨"
-                )
-
-                await _safe_edit(msg, (
-                    f"{status}\n"
-                    f"━━━━━━━━━━━━━━━━\n"
-                    f"{scan_line}\n"
-                    + "\n".join(result_lines) +
-                    f"\n🕐 {now_str}\n"
-                    f"{checkpoint_line}"
-                ))
+                await _safe_edit(msg, format_vote_result(result, now_str))
             else:
                 await _safe_edit(msg, "❌ 공감 도중 오류가 발생했습니다.")
             return

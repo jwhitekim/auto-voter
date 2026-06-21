@@ -3,7 +3,8 @@ import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from ..voter import Main, load_config
+from ..config import load_config
+from ..domain.vote_runner import VoteRunner
 from ..repository import storage
 from .utils import _authorized
 
@@ -37,7 +38,7 @@ async def cmd_setboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     loop = asyncio.get_running_loop()
     try:
         cfg = load_config()
-        bot = Main(cfg)
+        bot = VoteRunner(cfg)
         boards = await loop.run_in_executor(None, bot.get_board_list)
     except Exception as e:
         await msg.edit_text(f"❌ 게시판 목록 조회 실패: {e}")

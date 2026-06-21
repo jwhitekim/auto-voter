@@ -4,7 +4,8 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from ..voter import Main, load_config
+from ..config import load_config
+from ..domain.vote_runner import VoteRunner
 from ..repository import storage
 from .utils import _authorized
 
@@ -41,7 +42,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             cfg = load_config()
             loop = asyncio.get_running_loop()
-            bot = Main(cfg)
+            bot = VoteRunner(cfg)
             session_valid = await loop.run_in_executor(
                 None, bot.check_session, bot.target_board
             )

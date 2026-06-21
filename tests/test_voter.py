@@ -1,6 +1,6 @@
 import unittest
 
-from app.voter import Main
+from app.domain.voting import run_vote
 
 
 class FakeStorage:
@@ -16,15 +16,9 @@ class FakeStorage:
         self.values[key] = value
 
 
-class FakeMain(Main):
+class FakeClient:
     def __init__(self, pages, storage, vote_result="voted"):
-        self.cfg = {
-            "bot": {"board_id": "board", "max_pages": 5},
-            "timing": {"sleep_min": 0, "sleep_max": 0, "page_delay": 0},
-        }
         self.storage = storage
-        self.target_board = "board"
-        self.id_title_map = {}
         self.pages = pages
         self.vote_result = vote_result
         self.voted_ids = []
@@ -52,15 +46,27 @@ def article(article_id, posvote=0):
 
 
 class VoterTests(unittest.TestCase):
+    def _run(self, client, storage):
+        cfg = {
+            "bot": {"board_id": "board", "max_pages": 5},
+            "timing": {"sleep_min": 0, "sleep_max": 0, "page_delay": 0},
+        }
+        return run_vote(
+            client=client,
+            storage=storage,
+            cfg=cfg,
+            target_board="board",
+        )
+
     def test_votes_only_articles_before_found_checkpoint_then_updates_checkpoint(self):
         storage = FakeStorage({"last_article_id": "old"})
-        bot = FakeMain({
+        client = FakeClient({
             0: [article("newest"), article("newer"), article("old"), article("older")]
         }, storage)
 
-        result = bot.start()
+        result = self._run(client, storage)
 
-        self.assertEqual(bot.voted_ids, ["newest", "newer"])
+        self.assertEqual(client.voted_ids, ["newest", "newer"])
         self.assertTrue(result["checkpoint_found"])
         self.assertEqual(result["processed"], 2)
         self.assertEqual(result["candidates"], 2)
@@ -73,9 +79,9 @@ class VoterTests(unittest.TestCase):
             i * 20: [article(f"post-{i}-{j}") for j in range(20)]
             for i in range(5)
         }
-        bot = FakeMain(pages, storage)
+        client = FakeClient(pages, storage)
 
-        result = bot.start()
+        result = self._run(client, storage)
 
         self.assertFalse(result["checkpoint_found"])
         self.assertTrue(result["scan_limit_reached"])
@@ -85,11 +91,11 @@ class VoterTests(unittest.TestCase):
 
     def test_does_not_advance_checkpoint_when_any_vote_fails(self):
         storage = FakeStorage({"last_article_id": "old"})
-        bot = FakeMain({
+        client = FakeClient({
             0: [article("newest"), article("old")]
         }, storage, vote_result="failed")
 
-        result = bot.start()
+        result = self._run(client, storage)
 
         self.assertEqual(result["failed"], 1)
         self.assertEqual(storage.load("last_article_id"), "old")
