@@ -4,8 +4,8 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from ...domain.vote_runner import VoteRunner
-from ...storage import storage
+from ...core.vote_runner import VoteRunner
+from ...core.database import db
 from ...settings import load_config
 from .shared import _authorized
 
@@ -32,9 +32,9 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _authorized(update):
         return
 
-    etsid_saved = storage.exists("etsid")
+    etsid_saved = db.exists("etsid")
     session_valid = False
-    board_name_cached = storage.load("board_name")
+    board_name_cached = db.load("board_name")
 
     if etsid_saved:
         try:
@@ -44,14 +44,14 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             session_valid = await loop.run_in_executor(
                 None, bot.check_session, bot.target_board
             )
-            if not board_name_cached and storage.load("board_id"):
+            if not board_name_cached and db.load("board_id"):
                 boards = await loop.run_in_executor(None, bot.get_board_list)
                 found = next(
-                    (b["name"] for b in boards if b["id"] == storage.load("board_id")),
+                    (b["name"] for b in boards if b["id"] == db.load("board_id")),
                     None,
                 )
                 if found:
-                    storage.save("board_name", found)
+                    db.save("board_name", found)
                     board_name_cached = found
         except Exception:
             pass
@@ -59,7 +59,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cfg = load_config()
     current_board = (
         board_name_cached
-        or storage.load("board_id")
+        or db.load("board_id")
         or cfg["bot"]["board_id"]
     )
 
@@ -67,5 +67,5 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔐 세션: {'✅ 저장됨' if etsid_saved else '❌ 없음'}\n"
         f"📡 세션: {'✅ 유효' if session_valid else '❌ 만료/없음'}\n"
         f"📋 게시판: {current_board}\n"
-        f"🕐 마지막 실행: {storage.load('last_run_time') or '없음'}"
+        f"🕐 마지막 실행: {db.load('last_run_time') or '없음'}"
     )

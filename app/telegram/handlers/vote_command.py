@@ -5,8 +5,8 @@ from datetime import datetime, timezone, timedelta
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from ...domain.vote_runner import VoteRunner
-from ...storage import storage, get_skip_keywords, append_run_stat
+from ...core.vote_runner import VoteRunner
+from ...core.database import db, get_skip_keywords, append_run_stat
 from ...settings import load_config
 from ..messages import format_vote_result
 from .shared import _authorized, _safe_edit
@@ -17,7 +17,7 @@ _vote_lock = asyncio.Lock()
 async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _authorized(update):
         return
-    if not storage.exists("etsid"):
+    if not db.exists("etsid"):
         await update.message.reply_text("⚠️ /setsession 으로 etsid를 먼저 저장하세요.")
         return
     if _vote_lock.locked():
@@ -78,7 +78,7 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         KST = timezone(timedelta(hours=9))
         now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
-        storage.save("last_run_time", now_kst)
+        db.save("last_run_time", now_kst)
 
         if result["success"]:
             processed = result["processed"]

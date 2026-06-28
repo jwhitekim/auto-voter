@@ -1,7 +1,7 @@
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 
-from ...storage import storage
+from ...core.database import db
 from .shared import _authorized
 
 ASK_SESSION = 0
@@ -26,7 +26,7 @@ async def setsession_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def setsession_got(update: Update, context: ContextTypes.DEFAULT_TYPE):
     etsid = update.message.text.strip()
     for key in ("userid", "password", "browser_state"):
-        storage.delete(key)
-    storage.save("etsid", etsid)
+        db.delete(key)
+    db.save("etsid", etsid)
     await update.message.reply_text("✅ 세션이 저장되었습니다. /vote 로 시작하세요.")
     return ConversationHandler.END

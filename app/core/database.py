@@ -7,12 +7,12 @@ from cryptography.fernet import Fernet
 from dotenv import set_key
 from supabase import create_client
 
-from .settings import ENV_FILE, load_env
+from ..settings import ENV_FILE, load_env
 
 _ENV_FILE = str(ENV_FILE)
 
 
-class SecureStorage:
+class SecureDatabase:
     def __init__(self):
         load_env()
 
@@ -55,7 +55,7 @@ class SecureStorage:
                 "updated_at": self._now(),
             }).execute()
         except Exception as e:
-            logging.error(f"storage.save 실패 ({key}): {e}")
+            logging.error(f"db.save 실패 ({key}): {e}")
 
     def load(self, key: str) -> str | None:
         try:
@@ -68,27 +68,27 @@ class SecureStorage:
             if res.data:
                 return self._decrypt(res.data[0]["value"])
         except Exception as e:
-            logging.error(f"storage.load 실패 ({key}): {e}")
+            logging.error(f"db.load 실패 ({key}): {e}")
         return None
 
     def delete(self, key: str) -> None:
         try:
             self.supabase.table("bot_storage").delete().eq("key", key).execute()
         except Exception as e:
-            logging.error(f"storage.delete 실패 ({key}): {e}")
+            logging.error(f"db.delete 실패 ({key}): {e}")
 
     def exists(self, key: str) -> bool:
         return self.load(key) is not None
 
 
-class LazyStorage:
+class LazyDatabase:
     def __init__(self):
-        self._storage = None
+        self._db = None
 
-    def _get(self) -> SecureStorage:
-        if self._storage is None:
-            self._storage = SecureStorage()
-        return self._storage
+    def _get(self) -> SecureDatabase:
+        if self._db is None:
+            self._db = SecureDatabase()
+        return self._db
 
     @property
     def supabase(self):
@@ -107,11 +107,11 @@ class LazyStorage:
         return self._get().exists(key)
 
 
-storage = LazyStorage()
+db = LazyDatabase()
 
 
 def get_skip_keywords() -> list[str]:
-    raw = storage.load("skip_keywords")
+    raw = db.load("skip_keywords")
     try:
         return json.loads(raw) if raw else []
     except Exception:
@@ -119,11 +119,11 @@ def get_skip_keywords() -> list[str]:
 
 
 def save_skip_keywords(keywords: list[str]) -> None:
-    storage.save("skip_keywords", json.dumps(keywords))
+    db.save("skip_keywords", json.dumps(keywords))
 
 
 def load_run_history() -> list[dict]:
-    raw = storage.load("run_history")
+    raw = db.load("run_history")
     try:
         return json.loads(raw) if raw else []
     except Exception:
@@ -131,7 +131,7 @@ def load_run_history() -> list[dict]:
 
 
 def save_run_history(history: list[dict]) -> None:
-    storage.save("run_history", json.dumps(history))
+    db.save("run_history", json.dumps(history))
 
 
 def delete_run_stat(idx: int) -> bool:
@@ -145,7 +145,7 @@ def delete_run_stat(idx: int) -> bool:
 
 def append_run_stat(board_id: str, voted: int, skipped: int, ran_at: str, is_full_scan: bool | None = None) -> None:
     history = load_run_history()
-    board_name = storage.load("board_name") or board_id
+    board_name = db.load("board_name") or board_id
     history.append({
         "board_id": board_id,
         "board_name": board_name,
@@ -155,4 +155,4 @@ def append_run_stat(board_id: str, voted: int, skipped: int, ran_at: str, is_ful
         "is_valid": True,
         "is_full_scan": is_full_scan,
     })
-    storage.save("run_history", json.dumps(history[-30:]))
+    db.save("run_history", json.dumps(history[-30:]))

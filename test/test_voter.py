@@ -1,6 +1,6 @@
 import unittest
 
-from app.domain.voting import run_vote
+from app.core.vote_runner import run_vote
 
 
 class FakeStorage:

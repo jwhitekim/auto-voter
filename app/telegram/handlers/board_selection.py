@@ -3,8 +3,8 @@ import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from ...domain.vote_runner import VoteRunner
-from ...storage import storage
+from ...core.vote_runner import VoteRunner
+from ...core.database import db
 from ...settings import load_config
 from .shared import _authorized
 
@@ -30,7 +30,7 @@ def _build_board_keyboard(boards: list[dict], page: int) -> InlineKeyboardMarkup
 async def cmd_setboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _authorized(update):
         return
-    if not storage.exists("etsid"):
+    if not db.exists("etsid"):
         await update.message.reply_text("⚠️ /setsession 으로 etsid를 먼저 저장하세요.")
         return
 
@@ -67,8 +67,8 @@ async def setboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         board_id = data[3:]
         boards = context.user_data.get("boards", [])
         board_name = next((b["name"] for b in boards if b["id"] == board_id), board_id)
-        storage.save("board_id", board_id)
-        storage.save("board_name", board_name)
+        db.save("board_id", board_id)
+        db.save("board_name", board_name)
         await query.edit_message_text(
             f"✅ 게시판 설정 완료!\n"
             f"📌 {board_name} ({board_id})\n\n"
