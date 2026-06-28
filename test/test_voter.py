@@ -84,7 +84,7 @@ class VoterTests(unittest.TestCase):
         result = self._run(client, storage)
 
         self.assertFalse(result["checkpoint_found"])
-        self.assertTrue(result["scan_limit_reached"])
+        self.assertFalse(result["scan_limit_reached"])
         self.assertEqual(result["scanned"], 100)
         self.assertEqual(result["candidates"], 100)
         self.assertEqual(result["processed"], 100)

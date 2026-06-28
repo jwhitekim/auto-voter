@@ -55,7 +55,7 @@ def run_vote(
     else:
         offset = 0
         found = False
-        while not found and final_page < max_pages:
+        while not found:
             final_page += 1
             logging.info(f"[재개] {final_page}페이지 탐색 중 (체크포인트: {checkpoint_id})...")
             page_articles = client.get_article_ids(target_board, start_num=offset)
@@ -73,9 +73,9 @@ def run_vote(
                 offset += 20
                 time.sleep(cfg["timing"]["page_delay"])
         checkpoint_found = found
-        scan_limit_reached = not found and final_page >= max_pages
+        scan_limit_reached = False
         if not found:
-            logging.warning("체크포인트 게시글을 찾지 못했습니다. 스캔된 범위만 처리합니다.")
+            logging.warning("체크포인트 게시글을 찾지 못했습니다 (게시글 삭제 추정). 스캔된 범위만 처리합니다.")
 
     for item in articles_to_vote:
         title = (item.get("title") or "").lower()
