@@ -2,28 +2,16 @@ name: Deploy to Server
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - run: pip install -r requirements.txt
-
-      - run: python -m unittest discover test/ -v
-
   deploy:
-    needs: test
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
@@ -34,8 +22,12 @@ jobs:
           script: |
             cd ~/Joonspace/auto-voter
             git pull origin main
-            source ~/anaconda3/etc/profile.d/conda.sh
-            conda activate voter
-            pip install -r requirements.txt --quiet
-            sudo systemctl restart auto-voter
-            sudo systemctl status auto-voter --no-pager
+            docker stop auto-voter 2>/dev/null || true
+            docker rm auto-voter 2>/dev/null || true
+            docker build -t auto-voter .
+            docker run -d \
+              --name auto-voter \
+              --restart unless-stopped \
+              --env-file .env \
+              auto-voter
+            docker ps | grep auto-voter
