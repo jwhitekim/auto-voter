@@ -34,6 +34,8 @@ jobs:
           script: |
             cd ~/Joonspace/auto-voter
             git pull origin main
-            python3 -m pip install -r requirements.txt --quiet
+            source ~/anaconda3/etc/profile.d/conda.sh
+            conda activate voter
+            pip install -r requirements.txt --quiet
             sudo systemctl restart auto-voter
             sudo systemctl status auto-voter --no-pager
