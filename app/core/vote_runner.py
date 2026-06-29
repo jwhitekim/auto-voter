@@ -53,29 +53,49 @@ def run_vote(
             time.sleep(cfg["timing"]["page_delay"])
         scan_limit_reached = final_page >= max_pages
     else:
-        offset = 0
-        found = False
-        while not found:
-            final_page += 1
-            logging.info(f"[재개] {final_page}페이지 탐색 중 (체크포인트: {checkpoint_id})...")
-            page_articles = client.get_article_ids(target_board, start_num=offset)
-            if not page_articles:
-                break
-            scanned += len(page_articles)
-            if first_article_id is None:
-                first_article_id = page_articles[0]["id"]
-            for article in page_articles:
-                if article["id"] == checkpoint_id:
-                    found = True
-                    break
-                articles_to_vote.append(article)
-            if not found:
-                offset += 20
-                time.sleep(cfg["timing"]["page_delay"])
-        checkpoint_found = found
-        scan_limit_reached = False
-        if not found:
+        _, found_idx = client.find_article(
+            target_board,
+            checkpoint_id,
+            max_pages=max_pages,
+            page_delay=cfg["timing"]["page_delay"],
+        )
+
+        if found_idx == -1:
             logging.warning("체크포인트 게시글을 찾지 못했습니다 (게시글 삭제 추정). 스캔된 범위만 처리합니다.")
+            checkpoint_found = False
+            for i in range(max_pages):
+                final_page = i + 1
+                page_articles = client.get_article_ids(target_board, start_num=i * 20)
+                if not page_articles:
+                    break
+                scanned += len(page_articles)
+                if first_article_id is None:
+                    first_article_id = page_articles[0]["id"]
+                articles_to_vote.extend(page_articles)
+                time.sleep(cfg["timing"]["page_delay"])
+            scan_limit_reached = final_page >= max_pages
+        else:
+            checkpoint_found = True
+            offset = 0
+            found = False
+            while not found:
+                final_page += 1
+                logging.info(f"[재개] {final_page}페이지 탐색 중 (체크포인트: {checkpoint_id})...")
+                page_articles = client.get_article_ids(target_board, start_num=offset)
+                if not page_articles:
+                    break
+                scanned += len(page_articles)
+                if first_article_id is None:
+                    first_article_id = page_articles[0]["id"]
+                for article in page_articles:
+                    if article["id"] == checkpoint_id:
+                        found = True
+                        break
+                    articles_to_vote.append(article)
+                if not found:
+                    offset += 20
+                    time.sleep(cfg["timing"]["page_delay"])
+            scan_limit_reached = False
 
     for item in articles_to_vote:
         title = (item.get("title") or "").lower()
