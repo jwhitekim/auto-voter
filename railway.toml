@@ -1,8 +1,0 @@
-[build]
-buildCommand = "pip install -r requirements.txt"
-
-[deploy]
-startCommand = "python -m app.bot"
-numReplicas = 1
-sleepApplication = false
-restartPolicyType = "always"
