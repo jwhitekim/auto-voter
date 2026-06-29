@@ -37,8 +37,5 @@ jobs:
             source ~/anaconda3/etc/profile.d/conda.sh
             conda activate voter
             pip install -r requirements.txt --quiet
-            pkill -f "python -m app.bot" || true
-            sleep 2
-            nohup /home/prml/anaconda3/envs/voter/bin/python -m app.bot > ~/Joonspace/auto-voter/bot.log 2>&1 &
-            sleep 3
-            pgrep -f "python -m app.bot" && echo "Bot started successfully" || echo "Bot failed to start"
+            sudo systemctl restart auto-voter
+            sudo systemctl status auto-voter --no-pager
