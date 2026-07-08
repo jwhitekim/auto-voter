@@ -2,30 +2,55 @@ import asyncio
 import logging
 
 from telegram import Update
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, ConversationHandler
 
 from ...core.vote_runner import VoteRunner
 from ...core.database import db
 from ...settings import load_config
 from .shared import _authorized
+from .vote_command import cmd_vote
+
+ASK_EMPATHY = 0
+
+_COMMAND_LIST = (
+    "📋 사용 가능한 명령어:\n"
+    "/setsession — etsid 수동 입력\n"
+    "/setboard — 공감할 게시판 선택\n"
+    "/vote — 공감 봇 실행\n"
+    "/addskip 키워드 — 건너뛸 키워드 추가\n"
+    "/removeskip 키워드 — 키워드 삭제\n"
+    "/listskip — 등록된 키워드 목록\n"
+    "/stats — 공감 통계\n"
+    "/togglestat <번호> — 레코드 유효/제외 토글\n"
+    "/deletestat <번호> — 레코드 영구 삭제\n"
+    "/status — 현재 상태 확인"
+)
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _authorized(update):
-        return
-    await update.message.reply_text(
-        "📋 사용 가능한 명령어:\n"
-        "/setsession — etsid 수동 입력\n"
-        "/setboard — 공감할 게시판 선택\n"
-        "/vote — 공감 봇 실행\n"
-        "/addskip 키워드 — 건너뛸 키워드 추가\n"
-        "/removeskip 키워드 — 키워드 삭제\n"
-        "/listskip — 등록된 키워드 목록\n"
-        "/stats — 공감 통계\n"
-        "/togglestat <번호> — 레코드 유효/제외 토글\n"
-        "/deletestat <번호> — 레코드 영구 삭제\n"
-        "/status — 현재 상태 확인"
-    )
+        return ConversationHandler.END
+    await update.message.reply_text("공감하시겠습니까? (1: 예 / 0: 아니오)")
+    return ASK_EMPATHY
+
+
+async def start_empathy_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    answer = update.message.text.strip()
+    if answer == "1":
+        await cmd_vote(update, context)
+    elif answer == "0":
+        await update.message.reply_text("공감을 실행하지 않습니다.")
+    else:
+        await update.message.reply_text("1 또는 0으로 답해주세요. (1: 예 / 0: 아니오)")
+        return ASK_EMPATHY
+
+    await update.message.reply_text(_COMMAND_LIST)
+    return ConversationHandler.END
+
+
+async def start_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("취소되었습니다.")
+    return ConversationHandler.END
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):

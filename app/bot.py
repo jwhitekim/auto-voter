@@ -29,7 +29,11 @@ from .telegram.handlers.run_stats import (
     cmd_stats, cmd_togglestat, cmd_deletestat,
     togglestat_received, deletestat_received, stat_cancel,
 )
-from .telegram.handlers.basic import cmd_start, cmd_status
+from .telegram.handlers.basic import (
+    ASK_EMPATHY,
+    cmd_start, cmd_status,
+    start_empathy_answer, start_cancel,
+)
 from .settings import load_env
 
 load_env()
@@ -108,7 +112,15 @@ def main():
         fallbacks=[CommandHandler("cancel", stat_cancel)],
     )
 
-    app.add_handler(CommandHandler("start", cmd_start))
+    start_conv = ConversationHandler(
+        entry_points=[CommandHandler("start", cmd_start)],
+        states={
+            ASK_EMPATHY: [MessageHandler(filters.TEXT & ~filters.COMMAND, start_empathy_answer)],
+        },
+        fallbacks=[CommandHandler("cancel", start_cancel)],
+    )
+
+    app.add_handler(start_conv)
     app.add_handler(session_conv)
     app.add_handler(CommandHandler("setboard", cmd_setboard))
     app.add_handler(CallbackQueryHandler(setboard_callback, pattern="^(sb:|bp:)"))
