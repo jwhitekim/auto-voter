@@ -31,8 +31,8 @@ from .telegram.handlers.run_stats import (
     togglestat_received, deletestat_received, stat_cancel,
 )
 from .telegram.handlers.basic import (
-    ASK_EMPATHY,
-    cmd_start, cmd_status, cmd_menu, cmd_help, menu_vote_callback,
+    ASK_EMPATHY, VOTE_BUTTON_TEXT,
+    cmd_start, cmd_status, cmd_menu, cmd_help, vote_button_pressed,
     start_empathy_answer, start_cancel,
 )
 from .settings import load_env
@@ -135,7 +135,7 @@ def main():
     app.add_handler(CallbackQueryHandler(setboard_callback, pattern="^(sb:|bp:)"))
     app.add_handler(CommandHandler("vote", cmd_vote))
     app.add_handler(CommandHandler("menu", cmd_menu))
-    app.add_handler(CallbackQueryHandler(menu_vote_callback, pattern="^menu_vote$"))
+    app.add_handler(MessageHandler(filters.Regex(f"^{VOTE_BUTTON_TEXT}$"), vote_button_pressed))
     app.add_handler(addskip_conv)
     app.add_handler(removeskip_conv)
     app.add_handler(CommandHandler("listskip", cmd_listskip))

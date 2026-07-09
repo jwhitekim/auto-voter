@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
 
 from ...core.vote_runner import VoteRunner
@@ -11,6 +11,12 @@ from .shared import _authorized
 from .vote_command import cmd_vote
 
 ASK_EMPATHY = 0
+
+VOTE_BUTTON_TEXT = "🗳 투표하기"
+
+_VOTE_KEYBOARD = ReplyKeyboardMarkup(
+    [[KeyboardButton(VOTE_BUTTON_TEXT)]], resize_keyboard=True
+)
 
 _COMMAND_LIST = (
     "📋 사용 가능한 명령어:\n"
@@ -30,21 +36,21 @@ _COMMAND_LIST = (
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _authorized(update):
         return ConversationHandler.END
-    await update.message.reply_text("공감하시겠습니까? (1: 예 / 0: 아니오)")
+    await update.message.reply_text(
+        "공감하시겠습니까? (1: 예 / 0: 아니오)", reply_markup=_VOTE_KEYBOARD
+    )
     return ASK_EMPATHY
 
 
 async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _authorized(update):
         return
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("투표하기", callback_data="menu_vote")]]
+    await update.message.reply_text(
+        "아래 버튼을 눌러 공감을 실행하세요.", reply_markup=_VOTE_KEYBOARD
     )
-    await update.message.reply_text("아래 버튼을 눌러 공감을 실행하세요.", reply_markup=keyboard)
 
 
-async def menu_vote_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
+async def vote_button_pressed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _authorized(update):
         return
     await cmd_vote(update, context)
