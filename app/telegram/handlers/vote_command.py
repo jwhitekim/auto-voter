@@ -18,10 +18,10 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _authorized(update):
         return
     if not db.exists("etsid"):
-        await update.message.reply_text("⚠️ /setsession 으로 etsid를 먼저 저장하세요.")
+        await update.effective_message.reply_text("⚠️ /setsession 으로 etsid를 먼저 저장하세요.")
         return
     if _vote_lock.locked():
-        await update.message.reply_text("⚠️ 이미 공감이 실행 중입니다.")
+        await update.effective_message.reply_text("⚠️ 이미 공감이 실행 중입니다.")
         return
 
     async with _vote_lock:
@@ -31,22 +31,22 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             bot = VoteRunner(cfg)
         except ValueError:
-            await update.message.reply_text("⚠️ /setsession 으로 etsid를 먼저 저장하세요.")
+            await update.effective_message.reply_text("⚠️ /setsession 으로 etsid를 먼저 저장하세요.")
             return
         except Exception as e:
             logging.error(f"VoteRunner 초기화 실패: {e}")
-            await update.message.reply_text(f"❌ 초기화 실패: {e}")
+            await update.effective_message.reply_text(f"❌ 초기화 실패: {e}")
             return
 
         try:
             session_ok = await loop.run_in_executor(None, bot.check_session, bot.target_board)
         except Exception as e:
             logging.error(f"check_session 실패: {e}")
-            await update.message.reply_text("❌ 세션 확인 중 오류가 발생했습니다.")
+            await update.effective_message.reply_text("❌ 세션 확인 중 오류가 발생했습니다.")
             return
 
         if not session_ok:
-            await update.message.reply_text("❌ 세션이 유효하지 않습니다. /setsession 으로 다시 저장하세요.")
+            await update.effective_message.reply_text("❌ 세션이 유효하지 않습니다. /setsession 으로 다시 저장하세요.")
             return
 
         msg = await update.effective_chat.send_message(

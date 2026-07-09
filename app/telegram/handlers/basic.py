@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
 
 from ...core.vote_runner import VoteRunner
@@ -32,6 +32,28 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     await update.message.reply_text("공감하시겠습니까? (1: 예 / 0: 아니오)")
     return ASK_EMPATHY
+
+
+async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("투표하기", callback_data="menu_vote")]]
+    )
+    await update.message.reply_text("아래 버튼을 눌러 공감을 실행하세요.", reply_markup=keyboard)
+
+
+async def menu_vote_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    if not _authorized(update):
+        return
+    await cmd_vote(update, context)
+
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    await update.message.reply_text(_COMMAND_LIST)
 
 
 async def start_empathy_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):

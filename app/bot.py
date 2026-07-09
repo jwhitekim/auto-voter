@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 
+from telegram import BotCommand
 from telegram.error import Conflict
 from telegram.ext import (
     Application,
@@ -31,7 +32,7 @@ from .telegram.handlers.run_stats import (
 )
 from .telegram.handlers.basic import (
     ASK_EMPATHY,
-    cmd_start, cmd_status,
+    cmd_start, cmd_status, cmd_menu, cmd_help, menu_vote_callback,
     start_empathy_answer, start_cancel,
 )
 from .settings import load_env
@@ -60,6 +61,13 @@ async def _error_handler(update, context) -> None:
         logging.error(f"처리되지 않은 에러: {context.error}", exc_info=context.error)
 
 
+async def _post_init(application: Application) -> None:
+    await application.bot.set_my_commands([
+        BotCommand("vote", "투표하기"),
+        BotCommand("help", "도움말"),
+    ])
+
+
 def main():
     telegram_token = os.environ.get("TELEGRAM_TOKEN", "").strip()
     if not telegram_token:
@@ -69,6 +77,7 @@ def main():
         Application.builder()
         .token(telegram_token)
         .concurrent_updates(True)
+        .post_init(_post_init)
         .build()
     )
 
@@ -125,6 +134,8 @@ def main():
     app.add_handler(CommandHandler("setboard", cmd_setboard))
     app.add_handler(CallbackQueryHandler(setboard_callback, pattern="^(sb:|bp:)"))
     app.add_handler(CommandHandler("vote", cmd_vote))
+    app.add_handler(CommandHandler("menu", cmd_menu))
+    app.add_handler(CallbackQueryHandler(menu_vote_callback, pattern="^menu_vote$"))
     app.add_handler(addskip_conv)
     app.add_handler(removeskip_conv)
     app.add_handler(CommandHandler("listskip", cmd_listskip))
@@ -132,6 +143,7 @@ def main():
     app.add_handler(togglestat_conv)
     app.add_handler(deletestat_conv)
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("help", cmd_help))
     app.add_error_handler(_error_handler)
 
     app.run_polling()
