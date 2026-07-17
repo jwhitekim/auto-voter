@@ -163,6 +163,16 @@ class VoteRunner:
     def get_board_list(self) -> list[dict]:
         return self.client.get_board_list()
 
+    def delete_my_articles(self) -> int:
+        """최신 페이지에서 본인(is_mine=True) 게시글을 찾아 삭제. 삭제된 개수 반환."""
+        articles = self.client.get_article_ids(self.target_board, start_num=0)
+        deleted = 0
+        for a in articles:
+            if a.get("is_mine"):
+                if self.client.delete_article(a["id"]):
+                    deleted += 1
+        return deleted
+
     def start(self, progress_callback=None, skip_keywords: list[str] | None = None) -> dict:
         return run_vote(
             client=self.client,

@@ -35,6 +35,7 @@ from .telegram.handlers.basic import (
     cmd_start, cmd_status, cmd_menu, cmd_help, vote_button_pressed,
     start_empathy_answer, start_cancel,
 )
+from .core.autonomy import setup_autonomy
 from .settings import load_env
 
 load_env()
@@ -66,6 +67,7 @@ async def _post_init(application: Application) -> None:
         BotCommand("vote", "투표하기"),
         BotCommand("help", "도움말"),
     ])
+    setup_autonomy(application)
 
 
 def main():

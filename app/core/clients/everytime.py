@@ -111,6 +111,32 @@ class EverytimeClient:
             logging.error(f"게시판 목록 파싱 에러: {e}")
             return []
 
+    def delete_article(self, article_id) -> bool:
+        """자유게시판 본인 게시글 삭제. 응답 포맷은 실제 호출 후 확인해서 아래 분기 수정할 것."""
+        data = {"id": article_id}
+        try:
+            res_text = self._post("/remove/board/article", data=data).strip()
+            logging.info(f"[삭제 응답 원문] {res_text}")  # 최초 실행 시 이 로그로 포맷 확인
+            if res_text == "1" or "<response>1</response>" in res_text:
+                logging.info(f"[{article_id}] 삭제 완료")
+                return True
+            logging.warning(f"[{article_id}] 삭제 실패 응답: {res_text}")
+            return False
+        except Exception as e:
+            logging.error(f"에러 발생: {e}")
+            return False
+
+    def get_unread_count(self) -> int | None:
+        """메시지함 안읽음 개수 조회. 활동 감지용 신호로 사용."""
+        try:
+            res_text = self._post("/find/messageBox/unreadCount", data={}).strip()
+            logging.info(f"[unreadCount 응답 원문] {res_text}")  # 최초 실행 시 포맷 확인
+            # TODO: 실제 응답 구조 확인 후 파싱 로직 작성 (숫자 그대로 오는지, XML인지)
+            return int(res_text) if res_text.isdigit() else None
+        except Exception as e:
+            logging.error(f"unreadCount 조회 에러: {e}")
+            return None
+
     def push_vote(self, article_id) -> Literal["voted", "already", "failed"]:
         data = {"id": article_id, "vote": "1"}
         try:
