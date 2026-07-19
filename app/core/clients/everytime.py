@@ -73,6 +73,7 @@ class EverytimeClient:
                     "title": a.get("title", ""),
                     "created_at": a.get("created_at", ""),
                     "posvote": int(a.get("posvote", "0") or "0"),
+                    "is_mine": a.get("isMine") == "True",
                 }
                 for a in root.findall(".//article")
             ]
