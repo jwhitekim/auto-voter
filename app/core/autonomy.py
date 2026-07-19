@@ -11,8 +11,8 @@ from ..telegram.handlers.vote_command import _vote_lock
 
 KST = timezone(timedelta(hours=9))
 
-WINDOW_A = ((16, 0), (18, 0))
-WINDOW_B = ((21, 0), (1, 0))  # 익일로 넘어감
+WINDOW_A = ((15, 0), (18, 0))
+WINDOW_B = ((21, 0), (0, 0))  # 익일로 넘어감
 
 UNREAD_CHECK_WAIT_SECONDS = 2 * 60
 ACTIVITY_RETRY_WAIT_RANGE = (5 * 60, 15 * 60)

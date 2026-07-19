@@ -1,3 +1,4 @@
+import re
 import logging
 import time
 from typing import Literal
@@ -130,9 +131,10 @@ class EverytimeClient:
         """메시지함 안읽음 개수 조회. 활동 감지용 신호로 사용."""
         try:
             res_text = self._post("/find/messageBox/unreadCount", data={}).strip()
-            logging.info(f"[unreadCount 응답 원문] {res_text}")  # 최초 실행 시 포맷 확인
+            # logging.info(f"[unreadCount 응답 원문] {res_text}")  # 최초 실행 시 포맷 확인
             # TODO: 실제 응답 구조 확인 후 파싱 로직 작성 (숫자 그대로 오는지, XML인지)
-            return int(res_text) if res_text.isdigit() else None
+            match = re.search(r"<count>(\d+)</count>", res_text)
+            return int(match.group(1)) if match else None
         except Exception as e:
             logging.error(f"unreadCount 조회 에러: {e}")
             return None
