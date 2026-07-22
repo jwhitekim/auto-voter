@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from ...core.vote_runner import VoteRunner
 from ...core.database import db
-from ...settings import load_config
+from ...config import load_config
 from .shared import _authorized
 from .vote_command import cmd_vote
 

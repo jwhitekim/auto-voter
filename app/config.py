@@ -1,0 +1,124 @@
+import logging
+import os
+from datetime import timedelta, timezone
+from pathlib import Path
+
+import yaml
+from dotenv import load_dotenv, set_key
+
+KST = timezone(timedelta(hours=9))
+
+DEFAULTS = {
+    "bot": {
+        "board_id": "389115",
+        "max_pages": 5,
+    },
+    "timing": {
+        "sleep_min": 1.0,
+        "sleep_max": 3.0,
+        "page_delay": 0.5,
+    },
+    "logging": {
+        "level": "INFO",
+        "format": "%(asctime)s - %(levelname)s - %(message)s",
+    },
+}
+
+_ROOT = Path(__file__).parent
+ENV_FILE = _ROOT / ".env"
+
+# Everytime API client
+EVERYTIME_BASE_URL = "https://api.everytime.kr"
+EVERYTIME_REQUEST_TIMEOUT = 10
+EVERYTIME_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/121.0.0.0 Safari/537.36"
+)
+
+# Board selection UI
+BOARD_PAGE_SIZE = 10
+
+# Autonomy scheduling
+AUTONOMY_WINDOW_A = ((6, 0), (9, 0))
+AUTONOMY_WINDOW_B = ((17, 0), (20, 0))  # 익일로 넘어감
+AUTONOMY_UNREAD_CHECK_WAIT_SECONDS = 2 * 60
+AUTONOMY_ACTIVITY_RETRY_WAIT_RANGE = (5 * 60, 15 * 60)
+AUTONOMY_MAX_ACTIVITY_ATTEMPTS = 3
+AUTONOMY_DAILY_RESCHEDULE_JOB_NAME = "autonomy_daily_reschedule"
+AUTONOMY_TRIGGER_JOB_NAME_PREFIX = "autonomy_trigger_"
+AUTONOMY_SLOT_LABELS = {"A": "오전 슬롯", "B": "오후 슬롯"}
+AUTONOMY_SLOT_EMOJIS = {"A": "☀️", "B": "🌙"}
+
+
+def load_env() -> None:
+    load_dotenv(ENV_FILE)
+
+
+def _deep_merge(base, override):
+    result = base.copy()
+    for k, v in override.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+
+def load_config(path=None):
+    if path is None:
+        path = _ROOT / "config" / "config.yaml"
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            user_cfg = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        user_cfg = {}
+    return _deep_merge(DEFAULTS, user_cfg)
+
+
+def get_telegram_token() -> str:
+    return os.environ.get("TELEGRAM_TOKEN", "").strip()
+
+
+def get_telegram_chat_id() -> int | None:
+    raw = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not raw:
+        logging.error("TELEGRAM_CHAT_ID 환경변수가 설정되지 않았습니다.")
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        logging.error("TELEGRAM_CHAT_ID는 숫자여야 합니다.")
+        return None
+
+
+def get_supabase_credentials() -> tuple[str, str]:
+    return (
+        os.environ.get("SUPABASE_URL", "").strip(),
+        os.environ.get("SUPABASE_KEY", "").strip(),
+    )
+
+
+def get_encryption_key() -> str:
+    return os.environ.get("ENCRYPTION_KEY", "").strip()
+
+
+def set_encryption_key(key: str) -> None:
+    set_key(str(ENV_FILE), "ENCRYPTION_KEY", key)
+    os.environ["ENCRYPTION_KEY"] = key
+
+
+def build_everytime_headers(etsid: str) -> dict:
+    return {
+        "Host": "api.everytime.kr",
+        "Connection": "keep-alive",
+        "Accept": "*/*",
+        "X-Requested-With": "XMLHttpRequest",
+        "User-Agent": EVERYTIME_USER_AGENT,
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "Origin": "https://everytime.kr",
+        "Referer": "https://everytime.kr/",
+        "Cookie": f"etsid={etsid};",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+    }

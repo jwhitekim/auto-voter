@@ -6,34 +6,20 @@ from xml.etree import ElementTree
 
 import requests
 
+from ...config import EVERYTIME_BASE_URL, EVERYTIME_REQUEST_TIMEOUT, build_everytime_headers
+
 
 class EverytimeClient:
-    BASE_URL = "https://api.everytime.kr"
+    BASE_URL = EVERYTIME_BASE_URL
 
     def __init__(self, etsid: str):
         self.session = requests.Session()
-        self.session.headers.update({
-            "Host": "api.everytime.kr",
-            "Connection": "keep-alive",
-            "Accept": "*/*",
-            "X-Requested-With": "XMLHttpRequest",
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/121.0.0.0 Safari/537.36"
-            ),
-            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-            "Origin": "https://everytime.kr",
-            "Referer": "https://everytime.kr/",
-            "Cookie": f"etsid={etsid};",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-        })
+        self.session.headers.update(build_everytime_headers(etsid))
 
     def _post(self, path, data=None):
         try:
             url = f"{self.BASE_URL}{path}"
-            response = self.session.post(url, data=data, timeout=10)
+            response = self.session.post(url, data=data, timeout=EVERYTIME_REQUEST_TIMEOUT)
             response.raise_for_status()
             return response.text
         except Exception as e:

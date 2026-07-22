@@ -1,13 +1,13 @@
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 
 from ...core.database import load_run_history, save_run_history, delete_run_stat
+from ...config import KST
 from .shared import _authorized
 
 ASK_TOGGLE_IDX, ASK_DELETE_IDX = range(2)
-KST = timezone(timedelta(hours=9))
 
 
 def _parse_ran_at_kst(ran_at: str) -> datetime | None:

@@ -5,14 +5,13 @@ from telegram.ext import ContextTypes
 
 from ...core.vote_runner import VoteRunner
 from ...core.database import db
-from ...settings import load_config
+from ...config import BOARD_PAGE_SIZE, load_config
 from .shared import _authorized
 
 
 def _build_board_keyboard(boards: list[dict], page: int) -> InlineKeyboardMarkup:
-    per_page = 10
-    start = page * per_page
-    end = start + per_page
+    start = page * BOARD_PAGE_SIZE
+    end = start + BOARD_PAGE_SIZE
     rows = [
         [InlineKeyboardButton(b["name"], callback_data=f"sb:{b['id']}")]
         for b in boards[start:end]

@@ -1,13 +1,13 @@
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from ...core.vote_runner import VoteRunner
 from ...core.database import db, get_skip_keywords, append_run_stat
-from ...settings import load_config
+from ...config import KST, load_config
 from ..messages import format_vote_result
 from .shared import _authorized, _safe_edit
 
@@ -76,7 +76,6 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
         skip_keywords = get_skip_keywords()
         result = await loop.run_in_executor(None, bot.start, _progress, skip_keywords)
 
-        KST = timezone(timedelta(hours=9))
         now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
         db.save("last_run_time", now_kst)
 

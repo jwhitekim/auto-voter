@@ -1,30 +1,27 @@
 import asyncio
 import logging
 import random
-from datetime import date, datetime, time as dt_time, timedelta, timezone
+from datetime import date, datetime, time as dt_time, timedelta
 
 from telegram.ext import Application, ContextTypes
 
 from .vote_runner import VoteRunner
-from ..settings import load_config
+from ..config import (
+    KST,
+    AUTONOMY_ACTIVITY_RETRY_WAIT_RANGE as ACTIVITY_RETRY_WAIT_RANGE,
+    AUTONOMY_DAILY_RESCHEDULE_JOB_NAME as DAILY_RESCHEDULE_JOB_NAME,
+    AUTONOMY_MAX_ACTIVITY_ATTEMPTS as MAX_ACTIVITY_ATTEMPTS,
+    AUTONOMY_SLOT_EMOJIS as SLOT_EMOJIS,
+    AUTONOMY_SLOT_LABELS as SLOT_LABELS,
+    AUTONOMY_TRIGGER_JOB_NAME_PREFIX as TRIGGER_JOB_NAME_PREFIX,
+    AUTONOMY_UNREAD_CHECK_WAIT_SECONDS as UNREAD_CHECK_WAIT_SECONDS,
+    AUTONOMY_WINDOW_A as WINDOW_A,
+    AUTONOMY_WINDOW_B as WINDOW_B,
+    get_telegram_chat_id,
+    load_config,
+)
 from ..telegram.handlers.vote_command import _vote_lock
-from ..telegram.handlers.shared import _allowed_chat_id
 from ..telegram.messages import format_vote_result
-
-KST = timezone(timedelta(hours=9))
-
-WINDOW_A = ((15, 0), (18, 0))
-WINDOW_B = ((21, 0), (0, 0))  # 익일로 넘어감
-
-UNREAD_CHECK_WAIT_SECONDS = 2 * 60
-ACTIVITY_RETRY_WAIT_RANGE = (5 * 60, 15 * 60)
-MAX_ACTIVITY_ATTEMPTS = 3
-
-DAILY_RESCHEDULE_JOB_NAME = "autonomy_daily_reschedule"
-TRIGGER_JOB_NAME_PREFIX = "autonomy_trigger_"
-
-SLOT_LABELS = {"A": "오후 슬롯", "B": "야간 슬롯"}
-SLOT_EMOJIS = {"A": "☀️", "B": "🌙"}
 
 
 def _random_dt_in_window(base_date: date, window, crosses_midnight: bool) -> datetime:
@@ -79,7 +76,7 @@ async def _wait_for_no_activity(client) -> tuple[bool, int]:
 
 
 async def _send_report(context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
-    chat_id = _allowed_chat_id()
+    chat_id = get_telegram_chat_id()
     if chat_id is None:
         logging.error("[autonomy] chat_id를 확인할 수 없어 결과 메시지를 보내지 못했습니다.")
         return

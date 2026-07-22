@@ -1,33 +1,27 @@
 import json
-import os
 import logging
 from datetime import datetime, timezone
 
 from cryptography.fernet import Fernet
-from dotenv import set_key
 from supabase import create_client
 
-from ..settings import ENV_FILE, load_env
-
-_ENV_FILE = str(ENV_FILE)
+from ..config import get_encryption_key, get_supabase_credentials, load_env, set_encryption_key
 
 
 class SecureDatabase:
     def __init__(self):
         load_env()
 
-        url = os.environ.get("SUPABASE_URL", "").strip()
-        key_sb = os.environ.get("SUPABASE_KEY", "").strip()
+        url, key_sb = get_supabase_credentials()
         if not url or not key_sb:
             raise RuntimeError("SUPABASE_URL 또는 SUPABASE_KEY 환경변수가 설정되지 않았습니다.")
 
         self.supabase = create_client(url, key_sb)
 
-        enc_key = os.environ.get("ENCRYPTION_KEY", "").strip()
+        enc_key = get_encryption_key()
         if not enc_key:
             enc_key = Fernet.generate_key().decode()
-            set_key(_ENV_FILE, "ENCRYPTION_KEY", enc_key)
-            os.environ["ENCRYPTION_KEY"] = enc_key
+            set_encryption_key(enc_key)
             logging.warning(
                 "새 암호화 키를 생성했습니다. "
                 "Railway 배포 시 ENCRYPTION_KEY를 영구 환경변수로 설정하세요."

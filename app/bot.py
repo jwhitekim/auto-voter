@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import sys
 
 from telegram import BotCommand
@@ -36,7 +35,7 @@ from .telegram.handlers.basic import (
     start_empathy_answer, start_cancel,
 )
 from .core.autonomy import setup_autonomy
-from .settings import load_env
+from .config import get_telegram_token, load_env
 
 load_env()
 
@@ -71,7 +70,7 @@ async def _post_init(application: Application) -> None:
 
 
 def main():
-    telegram_token = os.environ.get("TELEGRAM_TOKEN", "").strip()
+    telegram_token = get_telegram_token()
     if not telegram_token:
         raise RuntimeError("TELEGRAM_TOKEN 환경변수가 설정되지 않았습니다.")
 

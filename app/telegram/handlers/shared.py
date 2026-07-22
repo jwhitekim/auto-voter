@@ -1,28 +1,14 @@
 import asyncio
-import logging
-import os
 
 from telegram import Update
 
-from ...settings import load_env
+from ...config import get_telegram_chat_id, load_env
 
 load_env()
 
 
-def _allowed_chat_id() -> int | None:
-    raw = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    if not raw:
-        logging.error("TELEGRAM_CHAT_ID 환경변수가 설정되지 않았습니다.")
-        return None
-    try:
-        return int(raw)
-    except ValueError:
-        logging.error("TELEGRAM_CHAT_ID는 숫자여야 합니다.")
-        return None
-
-
 def _authorized(update: Update) -> bool:
-    allowed_chat_id = _allowed_chat_id()
+    allowed_chat_id = get_telegram_chat_id()
     return allowed_chat_id is not None and update.effective_chat.id == allowed_chat_id
 
 
