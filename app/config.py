@@ -39,6 +39,9 @@ EVERYTIME_USER_AGENT = (
 # Board selection UI
 BOARD_PAGE_SIZE = 10
 
+# Page size for article listing
+PAGE_NUM = 20 
+
 # Autonomy scheduling
 AUTONOMY_WINDOW_A = ((6, 0), (9, 0))
 AUTONOMY_WINDOW_B = ((17, 0), (20, 0))  # 익일로 넘어감
