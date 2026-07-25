@@ -1,6 +1,7 @@
 import logging
 import random
 import time
+import json
 
 from .clients.everytime import EverytimeClient
 from .database import db
@@ -173,6 +174,14 @@ class VoteRunner:
                 if a.get("is_mine"):
                     if not a.get("posvote"):
                         if self.client.delete_article(a["id"]):
+                            logging.info(
+                                f"[VoteRunner] 본인 게시글 삭제 완료: ",
+                                extra={
+                                    "article_id": a["id"], 
+                                    "title": a.get("title"), 
+                                    "created_at": a.get("created_at")
+                                    }
+                                )
                             deleted += 1
         return deleted
 
