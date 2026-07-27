@@ -20,14 +20,14 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
           script: |
-            cd ~/Joonspace/everytime-like-bot
+            cd ~/!Joonspace/everytime-like-bot
             git pull origin main
-            docker stop everytime-like-bot 2>/dev/null || true
-            docker rm everytime-like-bot 2>/dev/null || true
-            docker build -t everytime-like-bot .
+            docker stop like-bot 2>/dev/null || true
+            docker rm like-bot 2>/dev/null || true
+            docker build -t like-bot .
             docker run -d \
-              --name everytime-like-bot \
+              --name like-bot \
               --restart unless-stopped \
               --env-file .env \
-              everytime-like-bot
-            docker ps | grep everytime-like-bot
+              like-bot
+            docker ps | grep like-bot
