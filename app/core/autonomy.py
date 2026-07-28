@@ -20,13 +20,15 @@ from ..config import (
     get_telegram_chat_id,
     load_config,
 )
+from .database import db
 from ..telegram.handlers.vote_command import _vote_lock
 from ..telegram.messages import format_vote_result
 
 
-def _random_dt_in_window(base_date: date, window, crosses_midnight: bool) -> datetime:
+def _random_dt_in_window(base_date: date, window) -> datetime:
     (start_h, start_m), (end_h, end_m) = window
     start_dt = datetime(base_date.year, base_date.month, base_date.day, start_h, start_m, tzinfo=KST)
+    crosses_midnight = (end_h, end_m) <= (start_h, start_m)
     end_date = base_date + timedelta(days=1) if crosses_midnight else base_date
     end_dt = datetime(end_date.year, end_date.month, end_date.day, end_h, end_m, tzinfo=KST)
     span_seconds = int((end_dt - start_dt).total_seconds())
@@ -35,20 +37,26 @@ def _random_dt_in_window(base_date: date, window, crosses_midnight: bool) -> dat
 
 def _todays_triggers(base_date: date) -> list[datetime]:
     return [
-        _random_dt_in_window(base_date, WINDOW_A, crosses_midnight=False),
-        _random_dt_in_window(base_date, WINDOW_B, crosses_midnight=True),
+        _random_dt_in_window(base_date, WINDOW_A),
+        _random_dt_in_window(base_date, WINDOW_B),
     ]
 
 
 def _schedule_triggers_for(application: Application, base_date: date) -> None:
     now = datetime.now(KST)
     for slot, when in zip(("A", "B"), _todays_triggers(base_date)):
+        name = f"{TRIGGER_JOB_NAME_PREFIX}{base_date.isoformat()}_{slot}"
+        if application.job_queue.get_jobs_by_name(name):
+            logging.info(f"[autonomy] 이미 예약된 트리거라 건너뜁니다: {name}")
+            continue
         if when <= now:
             logging.info(f"[autonomy] {when} 트리거는 이미 지나서 건너뜁니다.")
             continue
-        name = f"{TRIGGER_JOB_NAME_PREFIX}{base_date.isoformat()}_{slot}"
         application.job_queue.run_once(
-            _run_autonomous_vote, when=when, name=name, data={"slot": slot, "when": when}
+            _run_autonomous_vote,
+            when=when,
+            name=name,
+            data={"slot": slot, "when": when, "base_date": base_date.isoformat()},
         )
         logging.info(f"[autonomy] 트리거 예약: {when.isoformat()} ({name})")
 
@@ -90,9 +98,22 @@ async def _run_autonomous_vote(context: ContextTypes.DEFAULT_TYPE) -> None:
     job_data = context.job.data or {}
     slot = job_data.get("slot", "?")
     when: datetime | None = job_data.get("when")
+    base_date = job_data.get("base_date") or (when.date().isoformat() if when else "unknown")
     time_str = when.strftime("%H:%M") if when else "?"
     label = SLOT_LABELS.get(slot, "자동")
     emoji = SLOT_EMOJIS.get(slot, "⏰")
+
+    claim_key = f"autonomy_slot:{base_date}:{slot}"
+    claimed_at = datetime.now(KST).isoformat()
+    loop = asyncio.get_running_loop()
+    claimed = await loop.run_in_executor(None, db.claim_once, claim_key, claimed_at)
+    if claimed is False:
+        logging.info(f"[autonomy] 이미 처리된 슬롯이라 중복 실행을 건너뜁니다: {base_date}_{slot}")
+        return
+    if claimed is None:
+        logging.error(f"[autonomy] 슬롯 선점 확인 실패로 실행하지 않습니다: {base_date}_{slot}")
+        await _send_report(context, f"❌ {label}({time_str}) 자동 실행 실패 — 중복 실행 방지 상태 저장 실패")
+        return
 
     if _vote_lock.locked():
         logging.info("[autonomy] 수동 /vote 진행 중이라 이번 자동 슬롯은 건너뜁니다.")
@@ -117,7 +138,6 @@ async def _run_autonomous_vote(context: ContextTypes.DEFAULT_TYPE) -> None:
         logging.info("[autonomy] 대기 중 수동 /vote가 시작되어 이번 자동 슬롯은 건너뜁니다.")
         return
 
-    loop = asyncio.get_running_loop()
     await _vote_lock.acquire()
     try:
         deleted = await loop.run_in_executor(None, runner.delete_my_articles)

@@ -1,12 +1,23 @@
 import logging
 import os
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv, set_key
 
 KST = timezone(timedelta(hours=9))
+
+
+class KSTFormatter(logging.Formatter):
+    """모든 애플리케이션 로그 시각을 KST 오프셋과 함께 표시."""
+
+    def formatTime(self, record, datefmt=None):
+        value = datetime.fromtimestamp(record.created, KST)
+        if datefmt:
+            return value.strftime(datefmt)
+        return value.isoformat(sep=" ", timespec="milliseconds")
+
 
 DEFAULTS = {
     "bot": {
@@ -44,7 +55,7 @@ PAGE_NUM = 20
 
 # Autonomy scheduling
 AUTONOMY_WINDOW_A = ((6, 0), (9, 0))
-AUTONOMY_WINDOW_B = ((17, 0), (20, 0))  # 익일로 넘어감
+AUTONOMY_WINDOW_B = ((17, 0), (20, 0))
 AUTONOMY_UNREAD_CHECK_WAIT_SECONDS = 2 * 60
 AUTONOMY_ACTIVITY_RETRY_WAIT_RANGE = (5 * 60, 15 * 60)
 AUTONOMY_MAX_ACTIVITY_ATTEMPTS = 3

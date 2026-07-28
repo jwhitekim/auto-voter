@@ -51,6 +51,26 @@ class SecureDatabase:
         except Exception as e:
             logging.error(f"db.save 실패 ({key}): {e}")
 
+    def claim_once(self, key: str, value: str) -> bool | None:
+        """고유 키를 원자적으로 선점.
+
+        True는 이번 호출이 선점했음을, False는 이미 선점된 키임을 뜻한다.
+        저장소 오류는 중복 실행을 막기 위해 None으로 구분해 호출자가 실행을
+        중단할 수 있게 한다.
+        """
+        try:
+            self.supabase.table("bot_storage").insert({
+                "key": key,
+                "value": self._encrypt(value),
+                "updated_at": self._now(),
+            }).execute()
+            return True
+        except Exception as e:
+            if getattr(e, "code", None) == "23505" or "duplicate key" in str(e).lower():
+                return False
+            logging.error(f"db.claim_once 실패 ({key}): {e}")
+            return None
+
     def load(self, key: str) -> str | None:
         try:
             res = (
@@ -90,6 +110,9 @@ class LazyDatabase:
 
     def save(self, key: str, value: str) -> None:
         self._get().save(key, value)
+
+    def claim_once(self, key: str, value: str) -> bool | None:
+        return self._get().claim_once(key, value)
 
     def load(self, key: str) -> str | None:
         return self._get().load(key)

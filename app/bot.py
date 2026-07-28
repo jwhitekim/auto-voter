@@ -35,14 +35,15 @@ from .telegram.handlers.basic import (
     start_empathy_answer, start_cancel,
 )
 from .core.autonomy import setup_autonomy
-from .config import get_telegram_token, load_env
+from .config import KSTFormatter, get_telegram_token, load_env
 
 load_env()
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
+_log_handler = logging.StreamHandler()
+_log_handler.setFormatter(
+    KSTFormatter("%(asctime)s - %(levelname)s - %(message)s")
 )
+logging.basicConfig(level=logging.INFO, handlers=[_log_handler], force=True)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 _conflict_count = 0
