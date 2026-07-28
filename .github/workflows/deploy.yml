@@ -20,14 +20,14 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
           script: |
-            cd ~/Joonspace/auto-voter
+            cd ~/!Joonspace/everytime-like-bot
             git pull origin main
-            docker stop auto-voter 2>/dev/null || true
-            docker rm auto-voter 2>/dev/null || true
-            docker build -t auto-voter .
+            docker stop like-bot 2>/dev/null || true
+            docker rm like-bot 2>/dev/null || true
+            docker build -t like-bot .
             docker run -d \
-              --name auto-voter \
+              --name like-bot \
               --restart unless-stopped \
               --env-file .env \
-              auto-voter
-            docker ps | grep auto-voter
+              like-bot
+            docker ps | grep like-bot
