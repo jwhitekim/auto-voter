@@ -1,13 +1,14 @@
 import logging
 import unittest
 import asyncio
-from datetime import date
+from datetime import date, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 from postgrest.exceptions import APIError
 
 from app.config import KSTFormatter
 from app.core import autonomy
+from app.core.article_trends import infer_activity_windows, parse_article_datetime
 from app.core.database import SecureDatabase
 
 
@@ -97,6 +98,65 @@ class AutonomySchedulingTests(unittest.TestCase):
         )
         for call in application.job_queue.run_once_calls:
             self.assertEqual(call["data"]["base_date"], "2099-07-28")
+
+
+class ArticleTrendTests(unittest.TestCase):
+    def test_naive_article_time_is_interpreted_as_kst(self):
+        parsed = parse_article_datetime("2026-07-30 08:15:00")
+
+        self.assertEqual(parsed.isoformat(), "2026-07-30T08:15:00+09:00")
+
+    def test_busy_periods_move_both_windows(self):
+        now = datetime(2026, 7, 30, 23, 0, tzinfo=autonomy.KST)
+        articles = []
+        article_id = 0
+        for days_ago in range(5):
+            for hour in (8, 9, 10, 19, 20, 21):
+                for minute in (5, 35):
+                    article_id += 1
+                    created_at = now - timedelta(days=days_ago)
+                    created_at = created_at.replace(hour=hour, minute=minute)
+                    articles.append({
+                        "id": str(article_id),
+                        "created_at": created_at.isoformat(),
+                        "posvote": 0,
+                    })
+
+        windows, summary = infer_activity_windows(
+            articles,
+            now=now,
+            fallback_windows=[((6, 0), (9, 0)), ((17, 0), (20, 0))],
+            search_ranges=(((5, 0), (12, 0)), ((15, 0), (23, 0))),
+            lookback_days=7,
+            minimum_samples=20,
+            minimum_slot_samples=3,
+        )
+
+        self.assertEqual(windows, [((8, 0), (11, 0)), ((19, 0), (22, 0))])
+        self.assertEqual(summary["sample_count"], 60)
+        self.assertFalse(summary["used_fallback"])
+
+    def test_insufficient_samples_keep_default_windows(self):
+        now = datetime(2026, 7, 30, 23, 0, tzinfo=autonomy.KST)
+        articles = [{
+            "created_at": now.replace(hour=10).isoformat(),
+            "posvote": 10,
+        }]
+        fallback = [((6, 0), (9, 0)), ((17, 0), (20, 0))]
+
+        windows, summary = infer_activity_windows(
+            articles,
+            now=now,
+            fallback_windows=fallback,
+            search_ranges=(((5, 0), (12, 0)), ((15, 0), (23, 0))),
+            lookback_days=7,
+            minimum_samples=20,
+            minimum_slot_samples=3,
+        )
+
+        self.assertEqual(windows, fallback)
+        self.assertTrue(summary["used_fallback"])
+        self.assertEqual(summary["selected_windows"], fallback)
 
 
 class KSTFormatterTests(unittest.TestCase):

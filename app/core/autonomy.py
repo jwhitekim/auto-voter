@@ -6,17 +6,25 @@ from datetime import date, datetime, time as dt_time, timedelta
 from telegram.ext import Application, ContextTypes
 
 from .vote_runner import VoteRunner
+from .article_trends import infer_activity_windows, parse_article_datetime
 from ..config import (
     KST,
     AUTONOMY_ACTIVITY_RETRY_WAIT_RANGE as ACTIVITY_RETRY_WAIT_RANGE,
+    AUTONOMY_BOOTSTRAP_JOB_NAME as BOOTSTRAP_JOB_NAME,
     AUTONOMY_DAILY_RESCHEDULE_JOB_NAME as DAILY_RESCHEDULE_JOB_NAME,
     AUTONOMY_MAX_ACTIVITY_ATTEMPTS as MAX_ACTIVITY_ATTEMPTS,
     AUTONOMY_SLOT_EMOJIS as SLOT_EMOJIS,
     AUTONOMY_SLOT_LABELS as SLOT_LABELS,
+    AUTONOMY_TREND_LOOKBACK_DAYS as TREND_LOOKBACK_DAYS,
+    AUTONOMY_TREND_MAX_PAGES as TREND_MAX_PAGES,
+    AUTONOMY_TREND_MIN_SAMPLES as TREND_MIN_SAMPLES,
+    AUTONOMY_TREND_MIN_SLOT_SAMPLES as TREND_MIN_SLOT_SAMPLES,
+    AUTONOMY_TREND_SEARCH_RANGES as TREND_SEARCH_RANGES,
     AUTONOMY_TRIGGER_JOB_NAME_PREFIX as TRIGGER_JOB_NAME_PREFIX,
     AUTONOMY_UNREAD_CHECK_WAIT_SECONDS as UNREAD_CHECK_WAIT_SECONDS,
     AUTONOMY_WINDOW_A as WINDOW_A,
     AUTONOMY_WINDOW_B as WINDOW_B,
+    PAGE_NUM,
     get_telegram_chat_id,
     load_config,
 )
@@ -35,16 +43,23 @@ def _random_dt_in_window(base_date: date, window) -> datetime:
     return start_dt + timedelta(seconds=random.randint(0, span_seconds))
 
 
-def _todays_triggers(base_date: date) -> list[datetime]:
+def _todays_triggers(base_date: date, windows=None) -> list[datetime]:
+    selected_windows = windows or (WINDOW_A, WINDOW_B)
     return [
-        _random_dt_in_window(base_date, WINDOW_A),
-        _random_dt_in_window(base_date, WINDOW_B),
+        _random_dt_in_window(base_date, selected_windows[0]),
+        _random_dt_in_window(base_date, selected_windows[1]),
     ]
 
 
-def _schedule_triggers_for(application: Application, base_date: date) -> None:
+def _schedule_triggers_for(
+    application: Application,
+    base_date: date,
+    *,
+    windows=None,
+    trend_summary: dict | None = None,
+) -> None:
     now = datetime.now(KST)
-    for slot, when in zip(("A", "B"), _todays_triggers(base_date)):
+    for slot, when in zip(("A", "B"), _todays_triggers(base_date, windows)):
         name = f"{TRIGGER_JOB_NAME_PREFIX}{base_date.isoformat()}_{slot}"
         if application.job_queue.get_jobs_by_name(name):
             logging.info(f"[autonomy] 이미 예약된 트리거라 건너뜁니다: {name}")
@@ -56,13 +71,82 @@ def _schedule_triggers_for(application: Application, base_date: date) -> None:
             _run_autonomous_vote,
             when=when,
             name=name,
-            data={"slot": slot, "when": when, "base_date": base_date.isoformat()},
+            data={
+                "slot": slot,
+                "when": when,
+                "base_date": base_date.isoformat(),
+                "trend_summary": trend_summary,
+            },
         )
         logging.info(f"[autonomy] 트리거 예약: {when.isoformat()} ({name})")
 
 
+def _load_trend_windows() -> tuple[list, dict]:
+    fallback_windows = [WINDOW_A, WINDOW_B]
+    try:
+        runner = VoteRunner(load_config())
+        articles = []
+        seen_ids = set()
+        oldest = None
+
+        for page_idx in range(TREND_MAX_PAGES):
+            page = runner.client.get_article_ids(
+                runner.target_board,
+                start_num=page_idx * PAGE_NUM,
+            )
+            if not page:
+                break
+            for article in page:
+                article_id = article.get("id")
+                if article_id in seen_ids:
+                    continue
+                if article_id:
+                    seen_ids.add(article_id)
+                articles.append(article)
+                created_at = parse_article_datetime(article.get("created_at", ""))
+                if created_at and (oldest is None or created_at < oldest):
+                    oldest = created_at
+            if len(page) < PAGE_NUM:
+                break
+            if oldest and datetime.now(KST) - oldest > timedelta(days=TREND_LOOKBACK_DAYS):
+                break
+
+        windows, summary = infer_activity_windows(
+            articles,
+            now=datetime.now(KST),
+            fallback_windows=fallback_windows,
+            search_ranges=TREND_SEARCH_RANGES,
+            lookback_days=TREND_LOOKBACK_DAYS,
+            minimum_samples=TREND_MIN_SAMPLES,
+            minimum_slot_samples=TREND_MIN_SLOT_SAMPLES,
+        )
+        logging.info(
+            "[autonomy] 게시글 트렌드 분석: 표본=%s, 슬롯별 표본=%s, 시간창=%s",
+            summary["sample_count"],
+            summary["slot_sample_counts"],
+            windows,
+        )
+        return windows, summary
+    except Exception as e:
+        logging.warning(f"[autonomy] 트렌드 분석 실패, 기본 시간창을 사용합니다: {e}")
+        return fallback_windows, {
+            "sample_count": 0,
+            "lookback_days": TREND_LOOKBACK_DAYS,
+            "slot_sample_counts": [0, 0],
+            "used_fallback": True,
+            "selected_windows": fallback_windows,
+        }
+
+
 async def _daily_reschedule(context: ContextTypes.DEFAULT_TYPE) -> None:
-    _schedule_triggers_for(context.application, datetime.now(KST).date())
+    loop = asyncio.get_running_loop()
+    windows, summary = await loop.run_in_executor(None, _load_trend_windows)
+    _schedule_triggers_for(
+        context.application,
+        datetime.now(KST).date(),
+        windows=windows,
+        trend_summary=summary,
+    )
 
 
 async def _wait_for_no_activity(client) -> tuple[bool, int]:
@@ -97,6 +181,7 @@ async def _send_report(context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
 async def _run_autonomous_vote(context: ContextTypes.DEFAULT_TYPE) -> None:
     job_data = context.job.data or {}
     slot = job_data.get("slot", "?")
+    trend_summary = job_data.get("trend_summary") or {}
     when: datetime | None = job_data.get("when")
     base_date = job_data.get("base_date") or (when.date().isoformat() if when else "unknown")
     time_str = when.strftime("%H:%M") if when else "?"
@@ -157,6 +242,11 @@ async def _run_autonomous_vote(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     now_str = datetime.now(KST).strftime("%H:%M")
     header = f"{emoji} {label}({time_str}) 자동 실행\n🗑️ 본인 글 삭제: {deleted}개\n"
+    if trend_summary.get("sample_count"):
+        header += (
+            f"📈 최근 {trend_summary['lookback_days']}일 게시글 "
+            f"{trend_summary['sample_count']}개 기반 유동 슬롯\n"
+        )
     if retries:
         header += f"🔁 활동 감지 재시도: {retries}회\n"
     await _send_report(context, header + "\n" + format_vote_result(result, now_str))
@@ -167,7 +257,12 @@ def setup_autonomy(application: Application) -> None:
         logging.error("[autonomy] job_queue를 사용할 수 없습니다. python-telegram-bot[job-queue] 설치가 필요합니다.")
         return
 
-    _schedule_triggers_for(application, datetime.now(KST).date())
+    application.job_queue.run_once(
+        _daily_reschedule,
+        when=1,
+        name=BOOTSTRAP_JOB_NAME,
+        data={},
+    )
 
     application.job_queue.run_daily(
         _daily_reschedule,
