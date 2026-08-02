@@ -1,0 +1,11 @@
+services:
+  bot:
+    build:
+      context: .
+    container_name: everytime-like-bot
+    restart: unless-stopped
+    env_file:
+      - ./app/.env
+    volumes:
+      - ./app/.env:/app/app/.env
+
