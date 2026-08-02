@@ -3,4 +3,4 @@ python-telegram-bot[job-queue]>=20.0,<22.0
 cryptography==46.0.3
 pyyaml==6.0.3
 python-dotenv==1.0.1
-supabase==2.10.0
+supabase==2.30.0
