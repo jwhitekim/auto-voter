@@ -58,7 +58,8 @@ jobs:
             'wsl.exe -- bash -s' <<'REMOTE_SCRIPT'
           set -euo pipefail
           cd /mnt/c/Users/admin/joonspace/everytime-like-bot
-          git pull --ff-only origin main
+          git fetch origin main
+          git reset --hard origin/main
           docker compose up -d --build
           docker compose ps
           REMOTE_SCRIPT
