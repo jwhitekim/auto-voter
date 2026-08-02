@@ -5,7 +5,7 @@ services:
     container_name: everytime-like-bot
     restart: unless-stopped
     env_file:
-      - ./app/.env
+      - ./.env
     volumes:
-      - ./app/.env:/app/app/.env
+      - ./.env:/app/.env
 
