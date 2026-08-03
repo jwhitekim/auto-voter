@@ -30,8 +30,8 @@ async def cmd_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
             bot = VoteRunner(cfg)
-        except ValueError:
-            await update.effective_message.reply_text("⚠️ /setsession 으로 etsid를 먼저 저장하세요.")
+        except ValueError as e:
+            await update.effective_message.reply_text(f"⚠️ {e}")
             return
         except Exception as e:
             logging.error(f"VoteRunner 초기화 실패: {e}")

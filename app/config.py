@@ -21,7 +21,6 @@ class KSTFormatter(logging.Formatter):
 
 DEFAULTS = {
     "bot": {
-        "board_id": "389115",
         "max_pages": 5,
     },
     "timing": {
@@ -36,7 +35,10 @@ DEFAULTS = {
 }
 
 _ROOT = Path(__file__).parent
-ENV_FILE = _ROOT / ".env"
+# 실제 비밀값은 소스 코드와 분리된 프로젝트 루트의 .env에만 둔다.
+# .env와 data/는 .gitignore 및 .dockerignore에서 제외된다.
+ENV_FILE = _ROOT.parent / ".env"
+INTEREST_PROFILE_FILE = _ROOT.parent / "data" / "interest_profile.txt"
 
 # Everytime API client
 EVERYTIME_BASE_URL = "https://api.everytime.kr"
@@ -121,6 +123,18 @@ def get_supabase_credentials() -> tuple[str, str]:
 
 def get_encryption_key() -> str:
     return os.environ.get("ENCRYPTION_KEY", "").strip()
+
+
+def get_gemini_settings() -> tuple[str, str, str]:
+    try:
+        user_profile = INTEREST_PROFILE_FILE.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        user_profile = ""
+    return (
+        os.environ.get("GEMINI_API_KEY", "").strip(),
+        user_profile,
+        os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite").strip(),
+    )
 
 
 def set_encryption_key(key: str) -> None:

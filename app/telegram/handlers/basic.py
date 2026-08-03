@@ -89,7 +89,9 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session_valid = False
     board_name_cached = db.load("board_name")
 
-    if etsid_saved:
+    selected_board_id = db.load("board_id")
+
+    if etsid_saved and selected_board_id:
         try:
             cfg = load_config()
             loop = asyncio.get_running_loop()
@@ -112,8 +114,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cfg = load_config()
     current_board = (
         board_name_cached
-        or db.load("board_id")
-        or cfg["bot"]["board_id"]
+        or selected_board_id
+        or "미선택 (/setboard 필요)"
     )
 
     await update.message.reply_text(

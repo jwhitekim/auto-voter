@@ -37,7 +37,7 @@ async def cmd_setboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     loop = asyncio.get_running_loop()
     try:
         cfg = load_config()
-        bot = VoteRunner(cfg)
+        bot = VoteRunner(cfg, require_board=False)
         boards = await loop.run_in_executor(None, bot.get_board_list)
     except Exception as e:
         await msg.edit_text(f"❌ 게시판 목록 조회 실패: {e}")

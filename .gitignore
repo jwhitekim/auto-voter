@@ -23,6 +23,7 @@ data/
 
 # Generated media
 *.png
+*.txt
 
 # OS and editor noise
 .DS_Store

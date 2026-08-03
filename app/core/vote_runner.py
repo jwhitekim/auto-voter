@@ -4,8 +4,9 @@ import time
 import json
 
 from .clients.everytime import EverytimeClient
+from .clients.gemini import GeminiInterestDecider
 from .database import db
-from ..config import PAGE_NUM, BOARD_PAGE_SIZE
+from ..config import PAGE_NUM, BOARD_PAGE_SIZE, get_gemini_settings
 
 
 def run_vote(
@@ -16,6 +17,7 @@ def run_vote(
     target_board: str,
     progress_callback=None,
     skip_keywords: list[str] | None = None,
+    interest_decider=None,
 ) -> dict:
     processed = 0
     skipped = 0
@@ -111,6 +113,18 @@ def run_vote(
             skipped += 1
             continue
 
+        if interest_decider is not None:
+            interest_decision = interest_decider.should_vote(item)
+            if interest_decision is None:
+                # 일시적인 LLM 장애라면 다음 실행에서 다시 판단할 수 있도록
+                # 실패로 집계하고 체크포인트를 갱신하지 않는다.
+                failed += 1
+                continue
+            if not interest_decision:
+                logging.info(f"[{item['id']}] 건너뜀 (Gemini 관심도 판단): {item.get('title')}")
+                skipped += 1
+                continue
+
         vote_result = client.push_vote(article_id=item["id"])
         if vote_result == "voted":
             processed += 1
@@ -146,7 +160,7 @@ def run_vote(
 
 
 class VoteRunner:
-    def __init__(self, cfg):
+    def __init__(self, cfg, *, require_board: bool = True):
         self.cfg = cfg
         self.storage = db
         self.supabase = self.storage.supabase
@@ -156,8 +170,9 @@ class VoteRunner:
             raise ValueError("etsid가 저장되어 있지 않습니다. /setsession 을 먼저 실행하세요.")
 
         self.client = EverytimeClient(session_value)
-        saved_board = self.storage.load("board_id")
-        self.target_board = saved_board if saved_board else cfg["bot"]["board_id"]
+        self.target_board = self.storage.load("board_id")
+        if require_board and not self.target_board:
+            raise ValueError("게시판이 선택되지 않았습니다. 텔레그램에서 /setboard를 먼저 실행하세요.")
 
     def check_session(self, board_id):
         return self.client.check_session(board_id)
@@ -186,6 +201,10 @@ class VoteRunner:
         return deleted
 
     def start(self, progress_callback=None, skip_keywords: list[str] | None = None) -> dict:
+        if not self.target_board:
+            raise ValueError("게시판이 선택되지 않았습니다. 텔레그램에서 /setboard를 먼저 실행하세요.")
+        api_key, user_profile, model = get_gemini_settings()
+        interest_decider = GeminiInterestDecider(api_key, user_profile, model=model)
         return run_vote(
             client=self.client,
             storage=self.storage,
@@ -193,4 +212,5 @@ class VoteRunner:
             target_board=self.target_board,
             progress_callback=progress_callback,
             skip_keywords=skip_keywords,
+            interest_decider=interest_decider,
         )

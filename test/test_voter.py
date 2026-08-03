@@ -36,6 +36,16 @@ class FakeClient:
         return self.vote_result
 
 
+class FakeInterestDecider:
+    def __init__(self, liked_ids):
+        self.liked_ids = set(liked_ids)
+        self.seen_ids = []
+
+    def should_vote(self, article):
+        self.seen_ids.append(article["id"])
+        return article["id"] in self.liked_ids
+
+
 def article(article_id, posvote=0):
     return {
         "id": article_id,
@@ -99,6 +109,30 @@ class VoterTests(unittest.TestCase):
 
         self.assertEqual(result["failed"], 1)
         self.assertEqual(storage.load("last_article_id"), "old")
+
+    def test_votes_only_articles_selected_by_interest_decider(self):
+        storage = FakeStorage({"last_article_id": "old"})
+        client = FakeClient({
+            0: [article("liked"), article("not-liked"), article("old")]
+        }, storage)
+        decider = FakeInterestDecider({"liked"})
+        cfg = {
+            "bot": {"board_id": "board", "max_pages": 5},
+            "timing": {"sleep_min": 0, "sleep_max": 0, "page_delay": 0},
+        }
+
+        result = run_vote(
+            client=client,
+            storage=storage,
+            cfg=cfg,
+            target_board="board",
+            interest_decider=decider,
+        )
+
+        self.assertEqual(decider.seen_ids, ["liked", "not-liked"])
+        self.assertEqual(client.voted_ids, ["liked"])
+        self.assertEqual(result["processed"], 1)
+        self.assertEqual(result["skipped"], 1)
 
 
 if __name__ == "__main__":
