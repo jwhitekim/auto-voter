@@ -33,5 +33,11 @@
     "promotion": 0.92,
     "toxicity": 0.90,
     "clickbait": 0.95
+  },
+
+  "topics": [],
+
+  "hard_filter": {
+    "max_age_days": null
   }
 }

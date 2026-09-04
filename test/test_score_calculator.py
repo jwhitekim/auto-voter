@@ -48,13 +48,17 @@ class ScoreCalculatorTests(unittest.TestCase):
         final = sc.calculate_final_score(positive_score=1.0, penalty_score=0.0, penalty_strength=1.0)
         self.assertEqual(final, 1.0)
 
-    def test_strictness_pushes_mid_scores_down_more_than_high_scores(self):
-        mid_drop = 0.7 - sc.apply_strictness(0.7, strictness=1.0)
-        high_drop = 0.98 - sc.apply_strictness(0.98, strictness=1.0)
-        self.assertGreater(mid_drop, high_drop)
+    def test_effective_threshold_zero_strictness_is_identity(self):
+        self.assertAlmostEqual(sc.effective_threshold(0.68, strictness=0.0), 0.68)
 
-    def test_strictness_zero_is_identity(self):
-        self.assertAlmostEqual(sc.apply_strictness(0.73, strictness=0.0), 0.73)
+    def test_effective_threshold_raises_bar_with_max_strictness(self):
+        self.assertAlmostEqual(
+            sc.effective_threshold(0.68, strictness=1.0),
+            0.68 + sc.MAX_STRICTNESS_THRESHOLD_BONUS,
+        )
+
+    def test_effective_threshold_never_exceeds_one(self):
+        self.assertEqual(sc.effective_threshold(0.95, strictness=1.0), 1.0)
 
     def test_apply_hard_reject_returns_none_when_not_configured(self):
         self.assertIsNone(sc.apply_hard_reject({"promotion": 0.99}, {}))
@@ -100,9 +104,9 @@ class ScoreCalculatorTests(unittest.TestCase):
             "threshold": 0.6, "strictness": 0.0, "exploration": 0.2,
             "penalty_strength": 1.0, "min_confidence": 0.45,
         })
-        # adjusted_score(=positive_score, strictness=0) lands inside [threshold-exploration, threshold)
+        # final_score(=positive_score, penalty=0) lands inside [threshold-exploration, threshold)
         score_result = sc.calculate_score({"usefulness": 0.5, "originality": 0.5}, taste)
-        self.assertTrue(0.4 <= score_result["adjusted_score"] < 0.6)
+        self.assertTrue(0.4 <= score_result["final_score"] < 0.6)
 
         liked, _ = sc.make_decision(score_result, confidence=0.9, taste_cfg=taste, rng=FakeRng(0.0))
         skipped, _ = sc.make_decision(score_result, confidence=0.9, taste_cfg=taste, rng=FakeRng(0.99))
@@ -116,8 +120,8 @@ class ScoreCalculatorTests(unittest.TestCase):
         })
         features = {"usefulness": 0.5, "originality": 0.5, "promotion": 0.9, "toxicity": 0.9}
         score_result = sc.calculate_score(features, taste)
-        # penalty_strength=0 keeps adjusted_score in-band even though penalty_score itself is high
-        self.assertTrue(0.4 <= score_result["adjusted_score"] < 0.6)
+        # penalty_strength=0 keeps final_score in-band even though penalty_score itself is high
+        self.assertTrue(0.4 <= score_result["final_score"] < 0.6)
         self.assertGreaterEqual(score_result["penalty_score"], sc.EXPLORATION_MAX_PENALTY)
 
         decision, _ = sc.make_decision(score_result, confidence=0.9, taste_cfg=taste, rng=FakeRng(0.0))

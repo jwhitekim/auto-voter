@@ -3,6 +3,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import yaml
 from dotenv import load_dotenv, set_key
@@ -41,8 +42,17 @@ _ROOT = Path(__file__).parent
 ENV_FILE = _ROOT.parent / ".env"
 TASTE_CONFIG_FILE = _ROOT / "config" / "taste.json"
 
+# LLM이 측정하는 게시글 특성 이름 (taste.json의 preferences/penalties/hard_reject 키와 일치해야 함).
+POSITIVE_FEATURES = (
+    "usefulness", "humor", "originality", "technical_depth", "emotionality",
+    "topic_relevance", "novelty", "personal_interest", "clarity", "effort",
+    "information_density",
+)
+PENALTY_FEATURES = ("controversy", "promotion", "clickbait", "toxicity", "repetitiveness")
+ALL_FEATURES = POSITIVE_FEATURES + PENALTY_FEATURES
+
 # taste.json이 없거나 일부 키가 빠졌을 때 사용하는 기본값.
-DEFAULT_TASTE_CONFIG = {
+DEFAULT_TASTE_CONFIG: dict[str, Any] = {
     "preferences": {
         "usefulness": 0.9,
         "humor": 0.45,
@@ -71,7 +81,85 @@ DEFAULT_TASTE_CONFIG = {
         "min_confidence": 0.45,
     },
     "hard_reject": {},
+    # topic_relevance/personal_interest를 측정할 기준. 비워두면 LLM이 일반적인 유용성
+    # 기준으로만 평가한다 (예: ["백엔드 개발", "자취 절약", "헬스"]).
+    "topics": [],
+    "hard_filter": {
+        "max_age_days": None,
+    },
 }
+
+# decision 항목 중 0.0~1.0로 clamp할 필드 (penalty_strength는 배율이라 제외).
+_DECISION_UNIT_RANGE_FIELDS = ("threshold", "strictness", "exploration", "min_confidence")
+_PENALTY_STRENGTH_MAX = 2.0
+
+
+def _clamp01(value) -> float | None:
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if value != value:  # NaN
+        return None
+    return max(0.0, min(1.0, value))
+
+
+def _validate_taste_config(cfg: dict) -> dict:
+    """알 수 없는 키/타입이 아닌 값/범위를 벗어난 값을 걸러내 안전한 설정으로 만든다."""
+    cfg = {**cfg}
+
+    for section, known_keys in (("preferences", POSITIVE_FEATURES), ("penalties", PENALTY_FEATURES)):
+        raw = cfg.get(section, {})
+        cleaned = {}
+        for key in known_keys:
+            if key not in raw:
+                continue
+            clamped = _clamp01(raw[key])
+            if clamped is None:
+                logging.warning(f"taste.json {section}.{key} 값이 올바르지 않아 무시합니다: {raw[key]!r}")
+                continue
+            cleaned[key] = clamped
+        for key in raw:
+            if key not in known_keys:
+                logging.warning(f"taste.json {section}에 알 수 없는 키를 무시합니다: {key}")
+        cfg[section] = {**DEFAULT_TASTE_CONFIG[section], **cleaned}
+
+    decision = {**DEFAULT_TASTE_CONFIG["decision"], **cfg.get("decision", {})}
+    for key in _DECISION_UNIT_RANGE_FIELDS:
+        clamped = _clamp01(decision.get(key))
+        decision[key] = clamped if clamped is not None else DEFAULT_TASTE_CONFIG["decision"][key]
+    try:
+        penalty_strength = float(decision.get("penalty_strength", 1.0))
+        decision["penalty_strength"] = max(0.0, min(_PENALTY_STRENGTH_MAX, penalty_strength))
+    except (TypeError, ValueError):
+        decision["penalty_strength"] = DEFAULT_TASTE_CONFIG["decision"]["penalty_strength"]
+    cfg["decision"] = decision
+
+    hard_reject = {}
+    for key, value in cfg.get("hard_reject", {}).items():
+        if key not in ALL_FEATURES:
+            logging.warning(f"taste.json hard_reject에 알 수 없는 키를 무시합니다: {key}")
+            continue
+        clamped = _clamp01(value)
+        if clamped is None:
+            logging.warning(f"taste.json hard_reject.{key} 값이 올바르지 않아 무시합니다: {value!r}")
+            continue
+        hard_reject[key] = clamped
+    cfg["hard_reject"] = hard_reject
+
+    topics = cfg.get("topics", [])
+    cfg["topics"] = [str(t) for t in topics] if isinstance(topics, list) else []
+
+    max_age_days = cfg.get("hard_filter", {}).get("max_age_days")
+    if max_age_days is not None:
+        try:
+            max_age_days = float(max_age_days)
+        except (TypeError, ValueError):
+            logging.warning(f"taste.json hard_filter.max_age_days 값이 올바르지 않아 무시합니다: {max_age_days!r}")
+            max_age_days = None
+    cfg["hard_filter"] = {"max_age_days": max_age_days}
+
+    return cfg
 
 # Everytime API client
 EVERYTIME_BASE_URL = "https://api.everytime.kr"
@@ -143,7 +231,8 @@ def load_taste_config(path=None) -> dict:
     except (json.JSONDecodeError, OSError) as e:
         logging.error(f"taste.json 파싱 실패, 기본값을 사용합니다: {e}")
         user_cfg = {}
-    return _deep_merge(DEFAULT_TASTE_CONFIG, user_cfg)
+    merged = _deep_merge(DEFAULT_TASTE_CONFIG, user_cfg)
+    return _validate_taste_config(merged)
 
 
 def get_telegram_token() -> str:

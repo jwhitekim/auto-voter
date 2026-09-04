@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from app.core.services.post_filter import hard_filter
 
@@ -25,6 +26,36 @@ class HardFilterTests(unittest.TestCase):
     def test_no_keywords_configured_does_not_filter(self):
         article = {"title": "아무 제목", "content": "본문"}
         self.assertIsNone(hard_filter(article, skip_keywords=[]))
+
+    def test_rejects_blacklist_keyword_in_content_too(self):
+        article = {"title": "제목", "content": "과외 구합니다 연락주세요"}
+        reason = hard_filter(article, skip_keywords=["과외"])
+        self.assertEqual(reason, "blacklist_keyword:과외")
+
+    def test_rejects_phone_number_ad_pattern(self):
+        article = {"title": "급구", "content": "010-1234-5678로 연락주세요"}
+        reason = hard_filter(article)
+        self.assertEqual(reason, "ad_pattern:phone_number")
+
+    def test_does_not_flag_normal_post_as_ad(self):
+        article = {"title": "오늘 날씨 어때요", "content": "비 온다는데 우산 챙기세요"}
+        self.assertIsNone(hard_filter(article))
+
+    def test_rejects_post_older_than_max_age_days(self):
+        old_time = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        article = {"title": "제목", "content": "본문", "created_at": old_time}
+        reason = hard_filter(article, max_age_days=7)
+        self.assertTrue(reason.startswith("too_old:"))
+
+    def test_keeps_post_within_max_age_days(self):
+        recent_time = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        article = {"title": "제목", "content": "본문", "created_at": recent_time}
+        self.assertIsNone(hard_filter(article, max_age_days=7))
+
+    def test_max_age_days_none_disables_age_check(self):
+        old_time = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
+        article = {"title": "제목", "content": "본문", "created_at": old_time}
+        self.assertIsNone(hard_filter(article, max_age_days=None))
 
 
 if __name__ == "__main__":

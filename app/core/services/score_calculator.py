@@ -12,6 +12,9 @@ import random
 EXPLORATION_PICK_PROBABILITY = 0.3
 # penalty_score가 이 값 이상이면 exploration 대상에서 제외한다.
 EXPLORATION_MAX_PENALTY = 0.4
+# strictness=1.0일 때 threshold를 최대 이만큼 끌어올린다 (덧셈 방식이라 설정값 threshold가
+# 실제 커트라인과 크게 동떨어지지 않는다. strictness=0이면 threshold를 그대로 쓴다).
+MAX_STRICTNESS_THRESHOLD_BONUS = 0.15
 
 
 def _weighted_average(features: dict, weights: dict) -> float:
@@ -35,18 +38,18 @@ def calculate_final_score(positive_score: float, penalty_score: float, penalty_s
     return max(0.0, min(1.0, base_score))
 
 
-def apply_strictness(score: float, strictness: float) -> float:
-    """strictness가 높을수록 중간 점수를 threshold 아래로 더 밀어낸다.
+def effective_threshold(threshold: float, strictness: float) -> float:
+    """strictness가 높을수록 threshold를 살짝 끌어올려 중간 수준의 글이 넘기 어렵게 한다.
 
-    score ** (1 + strictness): score=1.0은 항상 1.0에 가깝게 유지되지만
-    score=0.7처럼 애매한 값은 strictness가 높을수록 더 낮게 눌린다.
+    최상위권 글(예: final_score 0.95)은 어차피 threshold를 넉넉히 넘기므로 거의 영향이 없고,
+    threshold 근처의 애매한 글만 strictness에 비례해 더 걸러진다.
     """
     strictness = max(0.0, min(1.0, strictness))
-    return max(0.0, min(1.0, score)) ** (1 + strictness)
+    return min(1.0, threshold + strictness * MAX_STRICTNESS_THRESHOLD_BONUS)
 
 
 def calculate_score(features: dict, taste_cfg: dict) -> dict:
-    """positive/penalty/final/adjusted 점수를 한 번에 계산한다."""
+    """positive/penalty/final 점수를 한 번에 계산한다."""
     preferences = taste_cfg.get("preferences", {})
     penalties = taste_cfg.get("penalties", {})
     decision_cfg = taste_cfg.get("decision", {})
@@ -56,13 +59,11 @@ def calculate_score(features: dict, taste_cfg: dict) -> dict:
     final_score = calculate_final_score(
         positive_score, penalty_score, decision_cfg.get("penalty_strength", 1.0)
     )
-    adjusted_score = apply_strictness(final_score, decision_cfg.get("strictness", 0.0))
 
     return {
         "positive_score": positive_score,
         "penalty_score": penalty_score,
         "final_score": final_score,
-        "adjusted_score": adjusted_score,
     }
 
 
@@ -86,10 +87,11 @@ def make_decision(
 ) -> tuple[str, str]:
     """("LIKE" | "SKIP" | "REJECT", 이유 문자열)을 반환한다."""
     decision_cfg = taste_cfg.get("decision", {})
-    threshold = decision_cfg.get("threshold", 0.68)
+    raw_threshold = decision_cfg.get("threshold", 0.68)
     exploration = decision_cfg.get("exploration", 0.0)
     min_confidence = decision_cfg.get("min_confidence", 0.45)
-    adjusted_score = score_result["adjusted_score"]
+    threshold = effective_threshold(raw_threshold, decision_cfg.get("strictness", 0.0))
+    final_score = score_result["final_score"]
     penalty_score = score_result["penalty_score"]
 
     if hard_reject_reason:
@@ -98,15 +100,15 @@ def make_decision(
     if confidence < min_confidence:
         return "SKIP", f"low_confidence:{confidence:.2f}<{min_confidence:.2f}"
 
-    if adjusted_score >= threshold:
-        return "LIKE", f"score {adjusted_score:.3f} >= threshold {threshold:.3f}"
+    if final_score >= threshold:
+        return "LIKE", f"score {final_score:.3f} >= threshold {threshold:.3f}"
 
     band_low = threshold - exploration
-    if band_low <= adjusted_score < threshold and penalty_score < EXPLORATION_MAX_PENALTY:
+    if band_low <= final_score < threshold and penalty_score < EXPLORATION_MAX_PENALTY:
         if rng.random() < EXPLORATION_PICK_PROBABILITY:
-            return "LIKE", f"exploration pick (score {adjusted_score:.3f} in [{band_low:.3f}, {threshold:.3f}))"
+            return "LIKE", f"exploration pick (score {final_score:.3f} in [{band_low:.3f}, {threshold:.3f}))"
 
-    return "SKIP", f"score {adjusted_score:.3f} < threshold {threshold:.3f}"
+    return "SKIP", f"score {final_score:.3f} < threshold {threshold:.3f}"
 
 
 def compute_contributions(features: dict, weights: dict) -> dict[str, float]:

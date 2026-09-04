@@ -141,6 +141,10 @@ def run_vote(
             already += 1
         else:
             failed += 1
+        if vote_result in ("voted", "already") and interest_decider is not None:
+            mark_liked = getattr(interest_decider, "mark_liked", None)
+            if mark_liked:
+                mark_liked(item["id"])
         if progress_callback:
             progress_callback(processed, final_page)
         time.sleep(random.uniform(
@@ -148,7 +152,9 @@ def run_vote(
             cfg["timing"]["sleep_max"],
         ))
 
-    if first_article_id and failed == 0:
+    if dry_run:
+        logging.info("[DRY_RUN] 체크포인트를 갱신하지 않습니다 (실제 실행 시 이 글들을 다시 검토합니다).")
+    elif first_article_id and failed == 0:
         storage.save("last_article_id", first_article_id)
     elif failed:
         logging.warning("실패한 투표가 있어 체크포인트를 갱신하지 않습니다.")
@@ -214,10 +220,11 @@ class VoteRunner:
             raise ValueError("게시판이 선택되지 않았습니다. 텔레그램에서 /setboard를 먼저 실행하세요.")
         api_key, model = get_gemini_settings()
         dry_run = get_dry_run()
-        feature_client = GeminiFeatureEvaluator(api_key, model=model)
+        taste_cfg = load_taste_config()
+        feature_client = GeminiFeatureEvaluator(api_key, model=model, topics=taste_cfg.get("topics"))
         interest_decider = PostEvaluator(
             feature_client,
-            load_taste_config(),
+            taste_cfg,
             skip_keywords=skip_keywords,
             dry_run=dry_run,
         )

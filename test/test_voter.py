@@ -54,10 +54,14 @@ class FakeInterestDecider:
     def __init__(self, liked_ids):
         self.liked_ids = set(liked_ids)
         self.seen_ids = []
+        self.marked_liked_ids = []
 
     def should_vote(self, article):
         self.seen_ids.append(article["id"])
         return article["id"] in self.liked_ids
+
+    def mark_liked(self, article_id):
+        self.marked_liked_ids.append(article_id)
 
 
 def article(article_id, posvote=0):
@@ -144,6 +148,9 @@ class VoterTests(unittest.TestCase):
 
         self.assertEqual(client.voted_ids, [])
         self.assertEqual(result["processed"], 1)
+        # dry-run은 실제로 아무것도 처리하지 않았으므로 체크포인트를 전진시키면 안 된다 —
+        # 그래야 실제 모드로 전환했을 때 이 글들을 다시 검토한다.
+        self.assertEqual(storage.load("last_article_id"), "old")
 
     def test_votes_only_articles_selected_by_interest_decider(self):
         storage = FakeStorage({"last_article_id": "old"})
@@ -168,6 +175,58 @@ class VoterTests(unittest.TestCase):
         self.assertEqual(client.voted_ids, ["liked"])
         self.assertEqual(result["processed"], 1)
         self.assertEqual(result["skipped"], 1)
+
+    def test_marks_liked_only_after_push_vote_succeeds(self):
+        storage = FakeStorage({"last_article_id": "old"})
+        client = FakeClient({
+            0: [article("liked"), article("old")]
+        }, storage)
+        decider = FakeInterestDecider({"liked"})
+        cfg = {
+            "bot": {"board_id": "board", "max_pages": 5},
+            "timing": {"sleep_min": 0, "sleep_max": 0, "page_delay": 0},
+        }
+
+        run_vote(
+            client=client, storage=storage, cfg=cfg, target_board="board", interest_decider=decider,
+        )
+
+        self.assertEqual(decider.marked_liked_ids, ["liked"])
+
+    def test_does_not_mark_liked_when_push_vote_fails(self):
+        storage = FakeStorage({"last_article_id": "old"})
+        client = FakeClient({
+            0: [article("liked"), article("old")]
+        }, storage, vote_result="failed")
+        decider = FakeInterestDecider({"liked"})
+        cfg = {
+            "bot": {"board_id": "board", "max_pages": 5},
+            "timing": {"sleep_min": 0, "sleep_max": 0, "page_delay": 0},
+        }
+
+        run_vote(
+            client=client, storage=storage, cfg=cfg, target_board="board", interest_decider=decider,
+        )
+
+        self.assertEqual(decider.marked_liked_ids, [])
+
+    def test_dry_run_does_not_mark_liked(self):
+        storage = FakeStorage({"last_article_id": "old"})
+        client = FakeClient({
+            0: [article("liked"), article("old")]
+        }, storage)
+        decider = FakeInterestDecider({"liked"})
+        cfg = {
+            "bot": {"board_id": "board", "max_pages": 5},
+            "timing": {"sleep_min": 0, "sleep_max": 0, "page_delay": 0},
+        }
+
+        run_vote(
+            client=client, storage=storage, cfg=cfg, target_board="board",
+            interest_decider=decider, dry_run=True,
+        )
+
+        self.assertEqual(decider.marked_liked_ids, [])
 
 
 if __name__ == "__main__":
