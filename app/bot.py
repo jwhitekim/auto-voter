@@ -31,7 +31,7 @@ from .telegram.handlers.run_stats import (
 )
 from .telegram.handlers.basic import (
     ASK_EMPATHY, VOTE_BUTTON_TEXT,
-    cmd_start, cmd_status, cmd_menu, cmd_help, vote_button_pressed,
+    cmd_start, cmd_status, cmd_menu, cmd_help, cmd_profile, vote_button_pressed,
     start_empathy_answer, start_cancel,
 )
 from .core.autonomy import setup_autonomy
@@ -65,6 +65,7 @@ async def _error_handler(update, context) -> None:
 async def _post_init(application: Application) -> None:
     await application.bot.set_my_commands([
         BotCommand("vote", "투표하기"),
+        BotCommand("profile", "취향 프로필 보기"),
         BotCommand("help", "도움말"),
     ])
     setup_autonomy(application)
@@ -145,6 +146,7 @@ def main():
     app.add_handler(togglestat_conv)
     app.add_handler(deletestat_conv)
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("profile", cmd_profile))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_error_handler(_error_handler)
 

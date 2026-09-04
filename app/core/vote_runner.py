@@ -4,9 +4,10 @@ import time
 import json
 
 from .clients.everytime import EverytimeClient
-from .clients.gemini import GeminiInterestDecider
+from .clients.gemini import GeminiFeatureEvaluator
+from .services.post_evaluator import PostEvaluator
 from .database import db
-from ..config import PAGE_NUM, BOARD_PAGE_SIZE, get_gemini_settings
+from ..config import PAGE_NUM, BOARD_PAGE_SIZE, get_gemini_settings, get_dry_run, load_taste_config
 
 
 def run_vote(
@@ -18,6 +19,7 @@ def run_vote(
     progress_callback=None,
     skip_keywords: list[str] | None = None,
     interest_decider=None,
+    dry_run: bool = False,
 ) -> dict:
     processed = 0
     skipped = 0
@@ -121,9 +123,16 @@ def run_vote(
                 failed += 1
                 continue
             if not interest_decision:
-                logging.info(f"[{item['id']}] 건너뜀 (Gemini 관심도 판단): {item.get('title')}")
+                logging.info(f"[{item['id']}] 건너뜀 (취향 파라미터 판단): {item.get('title')}")
                 skipped += 1
                 continue
+
+        if dry_run:
+            logging.info(f"[{item['id']}] [DRY_RUN] 실제 공감 요청은 보내지 않습니다: {item.get('title')}")
+            processed += 1
+            if progress_callback:
+                progress_callback(processed, final_page)
+            continue
 
         vote_result = client.push_vote(article_id=item["id"])
         if vote_result == "voted":
@@ -203,8 +212,17 @@ class VoteRunner:
     def start(self, progress_callback=None, skip_keywords: list[str] | None = None) -> dict:
         if not self.target_board:
             raise ValueError("게시판이 선택되지 않았습니다. 텔레그램에서 /setboard를 먼저 실행하세요.")
-        api_key, user_profile, model = get_gemini_settings()
-        interest_decider = GeminiInterestDecider(api_key, user_profile, model=model)
+        api_key, model = get_gemini_settings()
+        dry_run = get_dry_run()
+        feature_client = GeminiFeatureEvaluator(api_key, model=model)
+        interest_decider = PostEvaluator(
+            feature_client,
+            load_taste_config(),
+            skip_keywords=skip_keywords,
+            dry_run=dry_run,
+        )
+        if dry_run:
+            logging.warning("[VoteRunner] DRY_RUN 모드로 실행합니다 — 실제 공감은 누르지 않습니다.")
         return run_vote(
             client=self.client,
             storage=self.storage,
@@ -213,4 +231,5 @@ class VoteRunner:
             progress_callback=progress_callback,
             skip_keywords=skip_keywords,
             interest_decider=interest_decider,
+            dry_run=dry_run,
         )

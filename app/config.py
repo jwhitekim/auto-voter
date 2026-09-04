@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -38,7 +39,39 @@ _ROOT = Path(__file__).parent
 # 실제 비밀값은 소스 코드와 분리된 프로젝트 루트의 .env에만 둔다.
 # .env와 data/는 .gitignore 및 .dockerignore에서 제외된다.
 ENV_FILE = _ROOT.parent / ".env"
-INTEREST_PROFILE_FILE = _ROOT.parent / "data" / "interest_profile.txt"
+TASTE_CONFIG_FILE = _ROOT / "config" / "taste.json"
+
+# taste.json이 없거나 일부 키가 빠졌을 때 사용하는 기본값.
+DEFAULT_TASTE_CONFIG = {
+    "preferences": {
+        "usefulness": 0.9,
+        "humor": 0.45,
+        "originality": 0.85,
+        "technical_depth": 0.7,
+        "emotionality": 0.2,
+        "topic_relevance": 0.95,
+        "novelty": 0.75,
+        "personal_interest": 0.8,
+        "clarity": 0.55,
+        "effort": 0.6,
+        "information_density": 0.7,
+    },
+    "penalties": {
+        "controversy": 0.6,
+        "promotion": 1.0,
+        "clickbait": 0.85,
+        "toxicity": 1.0,
+        "repetitiveness": 0.7,
+    },
+    "decision": {
+        "threshold": 0.68,
+        "strictness": 0.7,
+        "exploration": 0.07,
+        "penalty_strength": 1.0,
+        "min_confidence": 0.45,
+    },
+    "hard_reject": {},
+}
 
 # Everytime API client
 EVERYTIME_BASE_URL = "https://api.everytime.kr"
@@ -98,6 +131,21 @@ def load_config(path=None):
     return _deep_merge(DEFAULTS, user_cfg)
 
 
+def load_taste_config(path=None) -> dict:
+    """취향 파라미터(config/taste.json)를 읽는다. 없거나 일부 키가 빠지면 기본값으로 채운다."""
+    if path is None:
+        path = TASTE_CONFIG_FILE
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            user_cfg = json.load(f) or {}
+    except FileNotFoundError:
+        user_cfg = {}
+    except (json.JSONDecodeError, OSError) as e:
+        logging.error(f"taste.json 파싱 실패, 기본값을 사용합니다: {e}")
+        user_cfg = {}
+    return _deep_merge(DEFAULT_TASTE_CONFIG, user_cfg)
+
+
 def get_telegram_token() -> str:
     return os.environ.get("TELEGRAM_TOKEN", "").strip()
 
@@ -125,16 +173,15 @@ def get_encryption_key() -> str:
     return os.environ.get("ENCRYPTION_KEY", "").strip()
 
 
-def get_gemini_settings() -> tuple[str, str, str]:
-    try:
-        user_profile = INTEREST_PROFILE_FILE.read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        user_profile = ""
+def get_gemini_settings() -> tuple[str, str]:
     return (
         os.environ.get("GEMINI_API_KEY", "").strip(),
-        user_profile,
         os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite").strip(),
     )
+
+
+def get_dry_run() -> bool:
+    return os.environ.get("DRY_RUN", "").strip().lower() in ("1", "true", "yes")
 
 
 def set_encryption_key(key: str) -> None:

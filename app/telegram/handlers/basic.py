@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from ...core.vote_runner import VoteRunner
 from ...core.database import db
-from ...config import load_config
+from ...config import load_config, load_taste_config
 from .shared import _authorized
 from .vote_command import cmd_vote
 
@@ -29,8 +29,28 @@ _COMMAND_LIST = (
     "/stats — 공감 통계\n"
     "/togglestat <번호> — 레코드 유효/제외 토글\n"
     "/deletestat <번호> — 레코드 영구 삭제\n"
-    "/status — 현재 상태 확인"
+    "/status — 현재 상태 확인\n"
+    "/profile — 현재 취향 파라미터 확인"
 )
+
+_PROFILE_LABELS = {
+    "usefulness": "정보성", "originality": "독창성", "topic_relevance": "관심주제",
+    "technical_depth": "기술적 깊이", "humor": "유머", "novelty": "새로움",
+    "personal_interest": "개인적 흥미", "clarity": "명확성", "effort": "노력",
+    "information_density": "정보 밀도", "emotionality": "감성 자극",
+    "controversy": "논쟁 회피", "promotion": "광고 회피", "clickbait": "낚시 회피",
+    "toxicity": "혐오 회피", "repetitiveness": "재탕 회피",
+}
+
+
+def _bar(value: float, width: int = 10) -> str:
+    filled = round(max(0.0, min(1.0, value)) * width)
+    return "█" * filled
+
+
+def _profile_line(key: str, value: float) -> str:
+    label = _PROFILE_LABELS.get(key, key)
+    return f"{label:<8} {_bar(value)} {round(value * 100)}%"
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -79,6 +99,27 @@ async def start_empathy_answer(update: Update, context: ContextTypes.DEFAULT_TYP
 async def start_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("취소되었습니다.")
     return ConversationHandler.END
+
+
+async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+
+    taste = load_taste_config()
+    preferences = taste.get("preferences", {})
+    penalties = taste.get("penalties", {})
+    decision = taste.get("decision", {})
+
+    lines = ["현재 취향 프로필", ""]
+    lines += [_profile_line(k, v) for k, v in preferences.items()]
+    lines.append("")
+    lines += [_profile_line(k, v) for k, v in penalties.items()]
+    lines.append("")
+    lines.append(f"Threshold: {round(decision.get('threshold', 0) * 100)}%")
+    lines.append(f"Strictness: {round(decision.get('strictness', 0) * 100)}%")
+    lines.append(f"Exploration: {round(decision.get('exploration', 0) * 100)}%")
+
+    await update.message.reply_text("\n".join(lines))
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):

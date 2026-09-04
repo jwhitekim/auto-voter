@@ -29,6 +29,20 @@ class FakeClient:
     def get_article_ids(self, board_id, limit_num=20, start_num=0):
         return self.pages.get(start_num, [])
 
+    def find_article(self, board_id, before_article_id, max_pages=50, page_delay=0.5):
+        count = 0
+        offset = 0
+        for _ in range(max_pages):
+            articles = self.get_article_ids(board_id, start_num=offset)
+            if not articles:
+                break
+            for idx, item in enumerate(articles):
+                if item["id"] == before_article_id:
+                    return count, idx
+                count += 1
+            offset += 20
+        return count, -1
+
     def push_vote(self, article_id):
         if self.storage.load("last_article_id") == "newest":
             raise AssertionError("checkpoint must not be updated before votes finish")
@@ -109,6 +123,27 @@ class VoterTests(unittest.TestCase):
 
         self.assertEqual(result["failed"], 1)
         self.assertEqual(storage.load("last_article_id"), "old")
+
+    def test_dry_run_does_not_call_push_vote(self):
+        storage = FakeStorage({"last_article_id": "old"})
+        client = FakeClient({
+            0: [article("newest"), article("old")]
+        }, storage)
+        cfg = {
+            "bot": {"board_id": "board", "max_pages": 5},
+            "timing": {"sleep_min": 0, "sleep_max": 0, "page_delay": 0},
+        }
+
+        result = run_vote(
+            client=client,
+            storage=storage,
+            cfg=cfg,
+            target_board="board",
+            dry_run=True,
+        )
+
+        self.assertEqual(client.voted_ids, [])
+        self.assertEqual(result["processed"], 1)
 
     def test_votes_only_articles_selected_by_interest_decider(self):
         storage = FakeStorage({"last_article_id": "old"})

@@ -151,6 +151,34 @@ def save_run_history(history: list[dict]) -> None:
     db.save("run_history", json.dumps(history))
 
 
+def get_evaluated_post(post_id: str) -> dict | None:
+    """이미 LLM으로 평가한 게시글이면 저장된 평가 결과를 반환 (재평가 방지용)."""
+    raw = db.load(f"evaluated_post:{post_id}")
+    try:
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
+
+
+def save_evaluated_post(
+    post_id: str,
+    *,
+    evaluated_at: str,
+    feature_scores: dict,
+    final_score: float,
+    decision: str,
+    liked: bool,
+) -> None:
+    db.save(f"evaluated_post:{post_id}", json.dumps({
+        "post_id": post_id,
+        "evaluated_at": evaluated_at,
+        "feature_scores": feature_scores,
+        "final_score": final_score,
+        "decision": decision,
+        "liked": liked,
+    }))
+
+
 def delete_run_stat(idx: int) -> bool:
     history = load_run_history()
     if not (0 <= idx < len(history)):
