@@ -19,7 +19,7 @@ class TasteConfigValidationTests(unittest.TestCase):
     def test_missing_file_falls_back_to_defaults(self):
         cfg = load_taste_config(Path("/nonexistent/taste.json"))
         self.assertIn("usefulness", cfg["preferences"])
-        self.assertEqual(cfg["decision"]["threshold"], 0.68)
+        self.assertEqual(cfg["decision"]["threshold"], 0.35)
 
     def test_out_of_range_preference_is_clamped(self):
         cfg = self._load({"preferences": {"usefulness": 2.0}})
