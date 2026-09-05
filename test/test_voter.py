@@ -51,13 +51,16 @@ class FakeClient:
 
 
 class FakeInterestDecider:
-    def __init__(self, liked_ids):
+    def __init__(self, liked_ids, failing_ids=()):
         self.liked_ids = set(liked_ids)
+        self.failing_ids = set(failing_ids)
         self.seen_ids = []
         self.marked_liked_ids = []
 
     def should_vote(self, article):
         self.seen_ids.append(article["id"])
+        if article["id"] in self.failing_ids:
+            return None  # 일시적 LLM 평가 실패 흉내
         return article["id"] in self.liked_ids
 
     def mark_liked(self, article_id):
@@ -117,7 +120,10 @@ class VoterTests(unittest.TestCase):
         self.assertEqual(result["candidates"], 100)
         self.assertEqual(result["processed"], 100)
 
-    def test_does_not_advance_checkpoint_when_any_vote_fails(self):
+    def test_advances_checkpoint_to_newest_even_when_a_vote_fails(self):
+        """실패한 개별 글은 이번 실행에서 포기하고, 체크포인트는 항상 이번에 확인한 최신 글로 세운다
+        (resume 상태에서 실패 때문에 계속 미루면 결국 max_pages를 넘어 '못 찾음' 상태가 되어 버려서,
+        어차피 그때는 실패 여부와 무관하게 저장하게 된다 - 처음부터 이렇게 통일한다)."""
         storage = FakeStorage({"last_article_id": "old"})
         client = FakeClient({
             0: [article("newest"), article("old")]
@@ -126,7 +132,7 @@ class VoterTests(unittest.TestCase):
         result = self._run(client, storage)
 
         self.assertEqual(result["failed"], 1)
-        self.assertEqual(storage.load("last_article_id"), "old")
+        self.assertEqual(storage.load("last_article_id"), "newest")
 
     def test_dry_run_does_not_call_push_vote(self):
         storage = FakeStorage({"last_article_id": "old"})
@@ -209,6 +215,46 @@ class VoterTests(unittest.TestCase):
         )
 
         self.assertEqual(decider.marked_liked_ids, [])
+
+    def test_advances_checkpoint_despite_failure_during_initial_scan(self):
+        """체크포인트가 아예 없는 최초 실행은 매번 '현재 시점 최신 N페이지'를 다시 스캔하므로,
+        개별 실패 때문에 체크포인트를 안 세우면 다음 실행 사이 쌓인 새 글에 밀려 스캔 범위 밖으로
+        벗어난 글이 영구히 누락될 수 있다. 그래서 실패가 있어도 체크포인트는 세워야 한다."""
+        storage = FakeStorage({})  # last_article_id 없음 -> is_initial
+        client = FakeClient({
+            0: [article("newest"), article("bad"), article("old")]
+        }, storage)
+        decider = FakeInterestDecider(liked_ids=set(), failing_ids={"bad"})
+        cfg = {
+            "bot": {"board_id": "board", "max_pages": 5},
+            "timing": {"sleep_min": 0, "sleep_max": 0, "page_delay": 0},
+        }
+
+        result = run_vote(
+            client=client, storage=storage, cfg=cfg, target_board="board", interest_decider=decider,
+        )
+
+        self.assertEqual(result["failed"], 1)
+        self.assertEqual(storage.load("last_article_id"), "newest")
+
+    def test_advances_checkpoint_despite_failure_when_checkpoint_not_found(self):
+        storage = FakeStorage({"last_article_id": "long-gone"})
+        client = FakeClient({
+            0: [article("newest"), article("bad"), article("old")]
+        }, storage)
+        decider = FakeInterestDecider(liked_ids=set(), failing_ids={"bad"})
+        cfg = {
+            "bot": {"board_id": "board", "max_pages": 5},
+            "timing": {"sleep_min": 0, "sleep_max": 0, "page_delay": 0},
+        }
+
+        result = run_vote(
+            client=client, storage=storage, cfg=cfg, target_board="board", interest_decider=decider,
+        )
+
+        self.assertFalse(result["checkpoint_found"])
+        self.assertEqual(result["failed"], 1)
+        self.assertEqual(storage.load("last_article_id"), "newest")
 
     def test_dry_run_does_not_mark_liked(self):
         storage = FakeStorage({"last_article_id": "old"})

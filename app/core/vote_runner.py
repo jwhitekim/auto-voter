@@ -154,10 +154,16 @@ def run_vote(
 
     if dry_run:
         logging.info("[DRY_RUN] 체크포인트를 갱신하지 않습니다 (실제 실행 시 이 글들을 다시 검토합니다).")
-    elif first_article_id and failed == 0:
+    elif not first_article_id:
+        pass  # 스캔된 글이 없음 (게시판이 비었거나 세션 문제) - 체크포인트 변경 없음
+    else:
+        # 실패(판단/공감 실패)한 글은 이번 실행에서는 포기하고 다음 새 글로 체크포인트를 세운다.
+        # resume 상태에서 실패를 이유로 체크포인트를 미루더라도, 실패가 계속되면 결국 max_pages를
+        # 넘어 "체크포인트 못 찾음" 상태가 되고 그때는 실패 여부와 무관하게 저장하게 되므로,
+        # 처음부터 이렇게 통일하는 편이 동작을 예측하기 쉽고 매번 배치를 통째로 재처리하지 않는다.
         storage.save("last_article_id", first_article_id)
-    elif failed:
-        logging.warning("실패한 투표가 있어 체크포인트를 갱신하지 않습니다.")
+        if failed:
+            logging.warning(f"{failed}건 실패했지만, 해당 글은 포기하고 체크포인트는 갱신합니다.")
 
     return {
         "processed": processed,
