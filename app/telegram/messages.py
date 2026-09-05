@@ -13,7 +13,7 @@ def format_vote_result(result: dict, now_str: str) -> str:
     if is_initial:
         scan_line = f"🔎 초기 스캔: {page}페이지, 게시글 {scanned}개"
     elif checkpoint_found:
-        scan_line = f"🔎 이전 기준 게시글 찾음: {page}페이지, 게시글 {scanned}개 확인"
+        scan_line = f"🔎 지난 실행 이후 새 글 {candidates}개 발견 (체크포인트까지 {page}페이지 탐색)"
     elif scan_limit_reached:
         max_posts = page * 20
         scan_line = f"⚠️ 이전 기준 게시글 못 찾음: 최대 {page}페이지/{max_posts}개 범위만 처리"
