@@ -71,7 +71,7 @@ class SecureDatabase:
             logging.error(f"db.claim_once 실패 ({key}): {e}")
             return None
 
-    def load(self, key: str) -> str | None:
+    def load(self, key: str, *, raise_on_error: bool = False) -> str | None:
         try:
             res = (
                 self.supabase.table("bot_storage")
@@ -83,6 +83,8 @@ class SecureDatabase:
                 return self._decrypt(res.data[0]["value"])
         except Exception as e:
             logging.error(f"db.load 실패 ({key}): {e}")
+            if raise_on_error:
+                raise
         return None
 
     def delete(self, key: str) -> None:
@@ -114,8 +116,8 @@ class LazyDatabase:
     def claim_once(self, key: str, value: str) -> bool | None:
         return self._get().claim_once(key, value)
 
-    def load(self, key: str) -> str | None:
-        return self._get().load(key)
+    def load(self, key: str, *, raise_on_error: bool = False) -> str | None:
+        return self._get().load(key, raise_on_error=raise_on_error)
 
     def delete(self, key: str) -> None:
         self._get().delete(key)

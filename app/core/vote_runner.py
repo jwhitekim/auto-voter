@@ -39,7 +39,18 @@ def run_vote(
             "success": False,
         }
 
-    checkpoint_id = storage.load("last_article_id")
+    try:
+        checkpoint_id = storage.load("last_article_id", raise_on_error=True)
+    except Exception as e:
+        # 저장소 조회 실패를 "체크포인트 없음(최초 실행)"으로 오인하면 안 된다 - 그러면 이미 있는
+        # 체크포인트를 무시하고 최신 N페이지만 다시 스캔하게 되어, 그 사이 밀려난 글들을 놓친다.
+        logging.error(f"체크포인트 조회 실패로 이번 실행을 중단합니다: {e}")
+        return {
+            "processed": 0, "skipped": 0, "already": 0, "failed": 0,
+            "candidates": 0, "scanned": 0, "final_page": 0,
+            "checkpoint_found": False, "scan_limit_reached": False,
+            "success": False,
+        }
     is_initial = checkpoint_id is None
     articles_to_vote = []
     first_article_id = None

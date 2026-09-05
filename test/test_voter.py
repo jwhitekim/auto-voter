@@ -4,11 +4,14 @@ from app.core.vote_runner import run_vote
 
 
 class FakeStorage:
-    def __init__(self, values=None):
+    def __init__(self, values=None, *, fail_load=False):
         self.values = dict(values or {})
         self.saves = []
+        self.fail_load = fail_load
 
-    def load(self, key):
+    def load(self, key, *, raise_on_error: bool = False):
+        if self.fail_load and raise_on_error:
+            raise RuntimeError("storage unavailable")
         return self.values.get(key)
 
     def save(self, key, value):
@@ -215,6 +218,18 @@ class VoterTests(unittest.TestCase):
         )
 
         self.assertEqual(decider.marked_liked_ids, [])
+
+    def test_aborts_without_scanning_when_checkpoint_lookup_fails(self):
+        """저장소 조회 자체가 실패하면 '체크포인트 없음(최초 실행)'으로 오인해서 최신 N페이지를
+        다시 스캔하면 안 된다 - 멀쩡한 체크포인트를 무시하고 그 사이 밀려난 글을 놓치게 된다."""
+        storage = FakeStorage({"last_article_id": "old"}, fail_load=True)
+        client = FakeClient({0: [article("newest"), article("old")]}, storage)
+
+        result = self._run(client, storage)
+
+        self.assertFalse(result["success"])
+        self.assertEqual(client.voted_ids, [])
+        self.assertEqual(storage.load("last_article_id"), "old")  # 값 자체는 안 건드려짐
 
     def test_advances_checkpoint_despite_failure_during_initial_scan(self):
         """체크포인트가 아예 없는 최초 실행은 매번 '현재 시점 최신 N페이지'를 다시 스캔하므로,
