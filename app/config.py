@@ -79,6 +79,10 @@ DEFAULT_TASTE_CONFIG: dict[str, Any] = {
         "exploration": 0.07,
         "penalty_strength": 1.0,
         "min_confidence": 0.45,
+        # 설정하면 threshold를 고정값 대신 "최근 평가 기록 중 상위 N%" 기준으로 매번 다시
+        # 계산한다 (게시판 콘텐츠 성향이 시간이 지나 바뀌어도 threshold를 수동으로 재조정할
+        # 필요가 없어짐). null이면 기존처럼 threshold 고정값을 그대로 쓴다.
+        "target_like_rate": None,
     },
     "hard_reject": {},
     # topic_relevance/personal_interest를 측정할 기준. 비워두면 LLM이 일반적인 유용성
@@ -133,6 +137,16 @@ def _validate_taste_config(cfg: dict) -> dict:
         decision["penalty_strength"] = max(0.0, min(_PENALTY_STRENGTH_MAX, penalty_strength))
     except (TypeError, ValueError):
         decision["penalty_strength"] = DEFAULT_TASTE_CONFIG["decision"]["penalty_strength"]
+
+    target_rate = decision.get("target_like_rate")
+    if target_rate is None:
+        decision["target_like_rate"] = None
+    else:
+        clamped = _clamp01(target_rate)
+        if clamped is None:
+            logging.warning(f"taste.json decision.target_like_rate 값이 올바르지 않아 무시합니다: {target_rate!r}")
+        decision["target_like_rate"] = clamped
+
     cfg["decision"] = decision
 
     hard_reject = {}

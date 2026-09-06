@@ -96,6 +96,39 @@ class SecureDatabase:
     def exists(self, key: str) -> bool:
         return self.load(key) is not None
 
+    def get_recent_final_scores(self, limit: int = 300) -> list[float]:
+        """최근 LLM으로 평가된(hard_filter로 걸러지지 않은) 글들의 final_score 목록.
+
+        적응형 threshold(decision.target_like_rate) 계산용 — 실제로 특성을 측정한 글만
+        포함한다 (hard_filter로 걸러진 글은 final_score=0.0/feature_scores={}로 저장되는데,
+        이걸 섞으면 분포가 실제보다 낮게 왜곡된다).
+        """
+        try:
+            res = (
+                self.supabase.table("bot_storage")
+                .select("value")
+                .like("key", "evaluated_post:%")
+                .order("updated_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+        except Exception as e:
+            logging.error(f"get_recent_final_scores 실패: {e}")
+            return []
+
+        scores = []
+        for row in res.data:
+            raw = self._decrypt(row["value"])
+            if not raw:
+                continue
+            try:
+                rec = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("feature_scores"):
+                scores.append(rec.get("final_score", 0.0))
+        return scores
+
 
 class LazyDatabase:
     def __init__(self):
@@ -118,6 +151,9 @@ class LazyDatabase:
 
     def load(self, key: str, *, raise_on_error: bool = False) -> str | None:
         return self._get().load(key, raise_on_error=raise_on_error)
+
+    def get_recent_final_scores(self, limit: int = 300) -> list[float]:
+        return self._get().get_recent_final_scores(limit)
 
     def delete(self, key: str) -> None:
         self._get().delete(key)

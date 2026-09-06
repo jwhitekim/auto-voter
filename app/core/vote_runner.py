@@ -5,6 +5,7 @@ import json
 
 from .clients.everytime import EverytimeClient
 from .clients.gemini import GeminiFeatureEvaluator
+from .services import score_calculator
 from .services.post_evaluator import PostEvaluator
 from .database import db
 from ..config import PAGE_NUM, BOARD_PAGE_SIZE, get_gemini_settings, get_dry_run, load_taste_config
@@ -238,6 +239,22 @@ class VoteRunner:
         api_key, model = get_gemini_settings()
         dry_run = get_dry_run()
         taste_cfg = load_taste_config()
+
+        target_like_rate = taste_cfg["decision"].get("target_like_rate")
+        if target_like_rate is not None:
+            recent_scores = self.storage.get_recent_final_scores()
+            adaptive_threshold = score_calculator.compute_adaptive_threshold(
+                recent_scores,
+                target_like_rate,
+                taste_cfg["decision"]["strictness"],
+                fallback=taste_cfg["decision"]["threshold"],
+            )
+            taste_cfg = {**taste_cfg, "decision": {**taste_cfg["decision"], "threshold": adaptive_threshold, "strictness": 0.0}}
+            logging.info(
+                f"[VoteRunner] 적응형 threshold={adaptive_threshold:.3f} "
+                f"(목표 비율 {target_like_rate:.0%}, 최근 표본 {len(recent_scores)}개)"
+            )
+
         feature_client = GeminiFeatureEvaluator(api_key, model=model, topics=taste_cfg.get("topics"))
         interest_decider = PostEvaluator(
             feature_client,

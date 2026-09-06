@@ -15,6 +15,9 @@ EXPLORATION_MAX_PENALTY = 0.4
 # strictness=1.0일 때 threshold를 최대 이만큼 끌어올린다 (덧셈 방식이라 설정값 threshold가
 # 실제 커트라인과 크게 동떨어지지 않는다. strictness=0이면 threshold를 그대로 쓴다).
 MAX_STRICTNESS_THRESHOLD_BONUS = 0.15
+# 적응형 threshold(target_like_rate)를 계산하기에 표본이 너무 적으면 신뢰할 수 없으므로,
+# 이만큼 쌓이기 전에는 설정 파일의 고정 threshold를 그대로 쓴다.
+MIN_ADAPTIVE_SAMPLES = 30
 
 
 def _weighted_average(features: dict, weights: dict) -> float:
@@ -46,6 +49,35 @@ def effective_threshold(threshold: float, strictness: float) -> float:
     """
     strictness = max(0.0, min(1.0, strictness))
     return min(1.0, threshold + strictness * MAX_STRICTNESS_THRESHOLD_BONUS)
+
+
+def compute_adaptive_threshold(
+    recent_scores: list[float],
+    target_like_rate: float,
+    strictness: float,
+    *,
+    fallback: float,
+    min_samples: int = MIN_ADAPTIVE_SAMPLES,
+) -> float:
+    """고정된 점수 대신 "최근 평가한 글 중 상위 N%"를 threshold로 매번 다시 계산한다.
+
+    게시판 콘텐츠의 점수 분포가 시간이 지나며 통째로 오르내려도 목표 비율(target_like_rate)이
+    유지되므로, threshold를 사람이 수동으로 재조정할 필요가 줄어든다. strictness는 여기서
+    목표 비율 자체를 줄이는 데 쓴다 (effective_threshold처럼 절대 점수를 더하면, 점수 분포의
+    스케일이 달라질 때 그 절대값의 의미도 같이 달라져서 여기서는 맞지 않는다).
+
+    표본이 충분하지 않으면(min_samples 미만) 아직 통계적으로 못 미더우므로 fallback을 쓴다.
+    """
+    if len(recent_scores) < min_samples:
+        return fallback
+
+    strictness = max(0.0, min(1.0, strictness))
+    effective_rate = max(0.0, min(1.0, target_like_rate * (1 - strictness)))
+
+    sorted_scores = sorted(recent_scores)
+    n = len(sorted_scores)
+    idx = max(0, min(n - 1, int(n * (1 - effective_rate))))
+    return sorted_scores[idx]
 
 
 def calculate_score(features: dict, taste_cfg: dict) -> dict:

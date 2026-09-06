@@ -115,7 +115,11 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append("")
     lines += [_profile_line(k, v) for k, v in penalties.items()]
     lines.append("")
-    lines.append(f"Threshold: {round(decision.get('threshold', 0) * 100)}%")
+    target_like_rate = decision.get("target_like_rate")
+    if target_like_rate is not None:
+        lines.append(f"Threshold: 적응형 (최근 평가 중 상위 {round(target_like_rate * 100)}% 목표)")
+    else:
+        lines.append(f"Threshold: {round(decision.get('threshold', 0) * 100)}%")
     lines.append(f"Strictness: {round(decision.get('strictness', 0) * 100)}%")
     lines.append(f"Exploration: {round(decision.get('exploration', 0) * 100)}%")
 

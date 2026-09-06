@@ -67,6 +67,22 @@ class TasteConfigValidationTests(unittest.TestCase):
         cfg = self._load({})
         self.assertIsNone(cfg["hard_filter"]["max_age_days"])
 
+    def test_target_like_rate_defaults_to_none(self):
+        cfg = load_taste_config(Path("/nonexistent/taste.json"))
+        self.assertIsNone(cfg["decision"]["target_like_rate"])
+
+    def test_target_like_rate_is_preserved_when_valid(self):
+        cfg = self._load({"decision": {"target_like_rate": 0.15}})
+        self.assertEqual(cfg["decision"]["target_like_rate"], 0.15)
+
+    def test_target_like_rate_clamped_to_unit_range(self):
+        cfg = self._load({"decision": {"target_like_rate": 1.5}})
+        self.assertEqual(cfg["decision"]["target_like_rate"], 1.0)
+
+    def test_target_like_rate_invalid_falls_back_to_none(self):
+        cfg = self._load({"decision": {"target_like_rate": "high"}})
+        self.assertIsNone(cfg["decision"]["target_like_rate"])
+
 
 if __name__ == "__main__":
     unittest.main()

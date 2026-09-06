@@ -60,6 +60,28 @@ class ScoreCalculatorTests(unittest.TestCase):
     def test_effective_threshold_never_exceeds_one(self):
         self.assertEqual(sc.effective_threshold(0.95, strictness=1.0), 1.0)
 
+    def test_adaptive_threshold_uses_fallback_when_samples_too_few(self):
+        scores = [0.5, 0.6, 0.7]  # min_samples(기본 30) 미달
+        result = sc.compute_adaptive_threshold(scores, target_like_rate=0.15, strictness=0.0, fallback=0.31)
+        self.assertEqual(result, 0.31)
+
+    def test_adaptive_threshold_picks_top_percentile(self):
+        scores = [i / 100 for i in range(100)]  # 0.00, 0.01, ..., 0.99 (100개)
+        # 상위 10% -> 0.90 이상이 되어야 함 (인덱스 90 = 0.90)
+        result = sc.compute_adaptive_threshold(scores, target_like_rate=0.10, strictness=0.0, fallback=0.0, min_samples=1)
+        self.assertAlmostEqual(result, 0.90)
+
+    def test_adaptive_threshold_strictness_shrinks_target_rate(self):
+        scores = [i / 100 for i in range(100)]
+        lenient = sc.compute_adaptive_threshold(scores, target_like_rate=0.20, strictness=0.0, fallback=0.0, min_samples=1)
+        strict = sc.compute_adaptive_threshold(scores, target_like_rate=0.20, strictness=0.5, fallback=0.0, min_samples=1)
+        self.assertGreater(strict, lenient)  # strictness가 높을수록 더 적게(더 높은 점수만) 통과
+
+    def test_adaptive_threshold_zero_target_rate_is_max_score(self):
+        scores = [0.1, 0.2, 0.3, 0.4] * 10
+        result = sc.compute_adaptive_threshold(scores, target_like_rate=0.0, strictness=0.0, fallback=0.0, min_samples=1)
+        self.assertEqual(result, max(scores))
+
     def test_apply_hard_reject_returns_none_when_not_configured(self):
         self.assertIsNone(sc.apply_hard_reject({"promotion": 0.99}, {}))
         self.assertIsNone(sc.apply_hard_reject({"promotion": 0.99}, None))
