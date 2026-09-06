@@ -74,7 +74,7 @@ DEFAULT_TASTE_CONFIG: dict[str, Any] = {
         "repetitiveness": 0.7,
     },
     "decision": {
-        "threshold": 0.35,
+        "threshold": 0.31,
         "strictness": 0.3,
         "exploration": 0.07,
         "penalty_strength": 1.0,
